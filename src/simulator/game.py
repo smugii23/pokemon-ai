@@ -67,45 +67,49 @@ class Game:
 
         player.draw_cards(1)
 
-
-    def get_state_representation(self, player: Player) -> Any:
+    def get_state_representation(self, player: Player) -> Dict[str, Any]:
         """
         Gather all relevant information about the current game state from the perspective of the
-        given player, so that the AI can play/learn
+        given player, so that the AI can play/learn.
         """
         opponent = self.game_state.get_opponent() if player == self.game_state.get_current_player() else self.game_state.get_current_player()
 
-        my_active_hp = player.active_pokemon.current_hp if player.active_pokemon else 0
-        my_active_energy = player.active_pokemon.attached_energy if player.active_pokemon else {}
-        my_bench_info = [(p.name, p.current_hp, p.attached_energy) for p in player.bench]
-        my_hand_cards = [c.name for c in player.hand]
+        my_active_details = self._get_pokemon_details(player.active_pokemon)
+        my_bench_details = [self._get_pokemon_details(p) for p in player.bench if p] 
 
-        opp_active_hp = opponent.active_pokemon.current_hp if opponent.active_pokemon else 0
-        opp_active_energy = opponent.active_pokemon.attached_energy if opponent.active_pokemon else {}
-        opp_bench_size = len(opponent.bench)
-        opp_discard_size = len(opponent.discard_pile)
-        opp_points = opponent.points
-
-        turn = self.game_state.turn_number
+        opp_active_details = self._get_pokemon_details(opponent.active_pokemon)
 
         state_dict = {
+            # player info
             "my_hand_size": len(player.hand),
+            "my_hand_cards": [c.name for c in player.hand], # list the actual card names
             "my_deck_size": len(player.deck),
             "my_discard_size": len(player.discard_pile),
+            "my_discard_pile_cards": [c.name for c in player.discard_pile], # knowing discard pile cards is useful for estimating probabilities for future draws
             "my_points": player.points,
             "my_energy_stand_available": player.energy_stand_available,
             "my_energy_stand_preview": player.energy_stand_preview,
-            "my_active_hp": my_active_hp,
-            "my_active_energy": my_active_energy, 
-            "my_bench": my_bench_info, 
-            "opp_active_hp": opp_active_hp,
-            "opp_active_energy": opp_active_energy,
-            "opp_bench_size": opp_bench_size,
-            "opp_discard_size": opp_discard_size,
-            "opp_points": opp_points,
-            "turn": turn,
+            "my_active_pokemon": my_active_details,
+            "my_bench_pokemon": my_bench_details,
+
+            # opponent info
+            "opp_hand_size": len(opponent.hand),
+            "opp_deck_size": len(opponent.deck),
+            "opp_discard_size": len(opponent.discard_pile),
+            "opp_discard_pile_cards": [c.name for c in opponent.discard_pile], # opponent discard pile is useful as well
+            "opp_points": opponent.points,
+            "opp_energy_stand_status": {
+                "available_exists": opponent.energy_stand_available is not None,
+                "preview": opponent.energy_stand_preview
+            },
+            "opp_active_pokemon": opp_active_details,
+            "opp_bench_size": len(opponent.bench),
+
+            # info about the game
+            "turn": self.game_state.turn_number,
+            "is_my_turn": player == self.game_state.get_current_player(),
             "can_attach_energy": not self.actions_this_turn.get("energy_attached", False),
-            # add features for specific cards in hand/play, effects, etc.
+            "is_first_turn": self.game_state.is_first_turn,
         }
         return state_dict
 
