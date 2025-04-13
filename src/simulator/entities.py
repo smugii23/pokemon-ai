@@ -48,7 +48,7 @@ class PokemonCard(Card):
         if self.is_fainted:
             return False
         if not (0 <= attack_index < len(self.attacks)):
-            print(f"Error: Invalid attack index {attack_index} for {self.name}")
+            # print(f"Error: Invalid attack index {attack_index} for {self.name}") # Optional: too verbose for AI?
             return False
 
         attack = self.attacks[attack_index]
@@ -117,10 +117,12 @@ class PokemonCard(Card):
 
     def __repr__(self):
         energy_str = ", ".join(f"{t}:{c}" for t, c in self.attached_energy.items())
+        attack_names = ", ".join(a.name for a in self.attacks)
         status = " (Active)" if self.is_active else ""
         status += " (Fainted)" if self.is_fainted else ""
         return (f"{self.name} [{self.pokemon_type}] "
                 f"HP:{self.current_hp}/{self.hp} "
+                f"Attacks:[{attack_names}] "
                 f"NRG:[{energy_str}]{status}")
 
 
@@ -144,14 +146,14 @@ class Player:
         active_found = False
         for i in range(len(self.hand) -1, -1, -1):
              card = self.hand[i]
+             # TODO: Add check for "Basic" Pokemon when that concept is added
              if isinstance(card, PokemonCard):
                  self.active_pokemon = self.hand.pop(i)
                  self.active_pokemon.is_active = True
                  print(f"{self.name} sets {self.active_pokemon.name} as active.")
                  active_found = True
                  break
-        if not active_found:
-            print(f"Error: {self.name} has no basic Pokemon in starting hand!")
+        # No need for 'if not active_found' check, as basic is guaranteed in TCG Pocket
 
     def draw_cards(self, num: int):
         """Draw cards from the deck, respecting max hand size."""
@@ -163,7 +165,7 @@ class Player:
             if len(self.hand) >= MAX_HAND_SIZE:
                 print(f"{self.name} cannot draw, hand is full (Max {MAX_HAND_SIZE})!")
                 break
-            
+
             # draw a card from the top
             card = self.deck.pop(0)
             self.hand.append(card)
@@ -202,7 +204,7 @@ class Player:
             return False
         new_active = self.bench.pop(0)
         # put the fainted pokemon in discard pile
-        if self.active_pokemon: 
+        if self.active_pokemon:
              self.discard_pile.append(self.active_pokemon)
              print(f"Discarded fainted {self.active_pokemon.name}.")
 
@@ -237,7 +239,7 @@ class GameState:
     def switch_turn(self):
         """Pass the turn to the other player and increment turn counter."""
         self.current_player_index = 1 - self.current_player_index
-        if self.current_player_index == 0: 
+        if self.current_player_index == 0:
              self.turn_number += 1
         self.is_first_turn = False
         print(f"\n--- Turn {self.turn_number}: {self.get_current_player().name}'s Turn ---")
@@ -261,3 +263,48 @@ class GameState:
         return (f"GameState(Turn: {self.turn_number} - {self.get_current_player().name}, "
                 f"P1: {self.players[0]}, P2: {self.players[1]})")
 
+
+# example 
+if __name__ == "__main__":
+    # example attacks (i made some up)
+    quick_attack = Attack(name="Quick Attack", cost={"Colorless": 1}, damage=20)
+    thunder_shock = Attack(name="Thunder Shock", cost={"Lightning": 1, "Colorless": 1}, damage=40)
+    scratch = Attack(name="Scratch", cost={"Colorless": 1}, damage=10)
+    ember = Attack(name="Ember", cost={"Fire": 1}, damage=30)
+    bite = Attack(name="Bite", cost={"Colorless": 1}, damage=10)
+    low_kick = Attack(name="Low Kick", cost={"Fighting": 1}, damage=20)
+    bubble = Attack(name="Bubble", cost={"Water": 1}, damage=10)
+
+    # pokemon with name, hp, attacks, type, and weaknesses
+    pika = PokemonCard("Pikachu", 60, [quick_attack, thunder_shock], pokemon_type="Lightning", weakness_type="Fighting")
+    char = PokemonCard("Charmander", 70, [scratch, ember], pokemon_type="Fire", weakness_type="Water")
+    rattata = PokemonCard("Rattata", 40, [bite], pokemon_type="Colorless")
+    mankey = PokemonCard("Mankey", 60, [low_kick], pokemon_type="Fighting", weakness_type="Psychic")
+    squirtle = PokemonCard("Squirtle", 60, [bubble], pokemon_type="Water", weakness_type="Lightning")
+
+    # for now, i'll just create simple decks that are illegal (can only have 2 of each card)
+    deck1_cards = [pika] * 2 + [rattata] * 8 + [mankey] * 10
+    deck2_cards = [char] * 2 + [squirtle] * 8 + [rattata] * 10
+    random.shuffle(deck1_cards)
+    random.shuffle(deck2_cards)
+
+    # create players
+    player1 = Player("Shuma")
+    player2 = Player("Ash")
+
+    # setup the game
+    player1.setup_game(deck1_cards[:20])
+    player2.setup_game(deck2_cards[:20])
+
+    # create the game state
+    game = GameState(player1, player2)
+    print("--- Initial Game State ---")
+    print(game)
+    print(f"Starting Player: {game.get_current_player().name}")
+
+    winner = game.check_win_condition()
+    if winner:
+        print(f"\nGame Over! Winner: {winner.name}")
+    else:
+        print("\n--- End of Example ---")
+        print(game)
