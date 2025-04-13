@@ -39,7 +39,7 @@ class PokemonCard(Card):
         self.pokemon_type = pokemon_type
         self.weakness_type = weakness_type
         self.is_ex = is_ex
-        self.is_basic = is_basic # Store the flag
+        self.is_basic = is_basic
         self.attached_energy: Dict[str, int] = {}
         self.is_active = False
         self.is_fainted = False
@@ -49,7 +49,6 @@ class PokemonCard(Card):
         if self.is_fainted:
             return False
         if not (0 <= attack_index < len(self.attacks)):
-            # print(f"Error: Invalid attack index {attack_index} for {self.name}") # Optional: too verbose for AI?
             return False
 
         attack = self.attacks[attack_index]
@@ -135,10 +134,9 @@ class Player:
         self.hand: List[Card] = []
         self.discard_pile: List[Card] = []
         self.points: int = 0
-        # self.energy_zone: Dict[str, int] = {"Colorless": 0} # Replaced by energy stand logic
-        self.deck_energy_types: List[str] = [] # e.g., ["Fire", "Colorless"] - Set during game setup
-        self.energy_stand_outer: Optional[str] = None # Energy available to attach this turn
-        self.energy_stand_inner: Optional[str] = None # Energy available next turn
+        self.deck_energy_types: List[str] = []
+        self.energy_stand_available: Optional[str] = None # energy available to attach this turn
+        self.energy_stand_preview: Optional[str] = None # energy available next turn
         self.active_pokemon: Optional[PokemonCard] = None
         self.bench: List[PokemonCard] = []
 
@@ -150,14 +148,12 @@ class Player:
         active_found = False
         for i in range(len(self.hand) -1, -1, -1):
              card = self.hand[i]
-             # TODO: Add check for "Basic" Pokemon when that concept is added
              if isinstance(card, PokemonCard):
                  self.active_pokemon = self.hand.pop(i)
                  self.active_pokemon.is_active = True
                  print(f"{self.name} sets {self.active_pokemon.name} as active.")
                  active_found = True
                  break
-        # No need for 'if not active_found' check, as basic is guaranteed in TCG Pocket
 
     def draw_cards(self, num: int):
         """Draw cards from the deck, respecting max hand size."""
@@ -221,7 +217,7 @@ class Player:
     def __repr__(self):
         active_str = self.active_pokemon.name if self.active_pokemon else 'None'
         bench_str = ", ".join(p.name for p in self.bench)
-        energy_stand_str = f"Outer:{self.energy_stand_outer or 'None'}, Inner:{self.energy_stand_inner or 'None'}"
+        energy_stand_str = f"Available:{self.energy_stand_available or 'None'}, Preview:{self.energy_stand_preview or 'None'}" # Updated names
         return (f"Player({self.name}, Pts:{self.points}, Hand:{len(self.hand)}, Deck:{len(self.deck)}, "
                 f"Discard:{len(self.discard_pile)}, EnergyStand:[{energy_stand_str}], "
                 f"Active:{active_str}, Bench:[{bench_str}])")
