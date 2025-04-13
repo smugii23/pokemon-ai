@@ -30,7 +30,7 @@ class PokemonCard(Card):
     """A class for cards that are pokemon"""
     def __init__(self, name: str, hp: int, attacks: List[Attack],
                  pokemon_type: str = "Colorless", weakness_type: Optional[str] = None,
-                 is_ex: bool = False):
+                 is_ex: bool = False, is_basic: bool = True): # Added is_basic flag
         super().__init__(name)
         self.hp = hp
         self.current_hp = hp
@@ -39,6 +39,7 @@ class PokemonCard(Card):
         self.pokemon_type = pokemon_type
         self.weakness_type = weakness_type
         self.is_ex = is_ex
+        self.is_basic = is_basic # Store the flag
         self.attached_energy: Dict[str, int] = {}
         self.is_active = False
         self.is_fainted = False
@@ -134,7 +135,10 @@ class Player:
         self.hand: List[Card] = []
         self.discard_pile: List[Card] = []
         self.points: int = 0
-        self.energy_zone: Dict[str, int] = {"Colorless": 0}
+        # self.energy_zone: Dict[str, int] = {"Colorless": 0} # Replaced by energy stand logic
+        self.deck_energy_types: List[str] = [] # e.g., ["Fire", "Colorless"] - Set during game setup
+        self.energy_stand_outer: Optional[str] = None # Energy available to attach this turn
+        self.energy_stand_inner: Optional[str] = None # Energy available next turn
         self.active_pokemon: Optional[PokemonCard] = None
         self.bench: List[PokemonCard] = []
 
@@ -217,8 +221,9 @@ class Player:
     def __repr__(self):
         active_str = self.active_pokemon.name if self.active_pokemon else 'None'
         bench_str = ", ".join(p.name for p in self.bench)
+        energy_stand_str = f"Outer:{self.energy_stand_outer or 'None'}, Inner:{self.energy_stand_inner or 'None'}"
         return (f"Player({self.name}, Pts:{self.points}, Hand:{len(self.hand)}, Deck:{len(self.deck)}, "
-                f"Discard:{len(self.discard_pile)}, NRG Zone:{self.energy_zone}, "
+                f"Discard:{len(self.discard_pile)}, EnergyStand:[{energy_stand_str}], "
                 f"Active:{active_str}, Bench:[{bench_str}])")
 
 
@@ -264,27 +269,23 @@ class GameState:
                 f"P1: {self.players[0]}, P2: {self.players[1]})")
 
 
-# example 
+# example game
 if __name__ == "__main__":
     # example attacks (i made some up)
-    quick_attack = Attack(name="Quick Attack", cost={"Colorless": 1}, damage=20)
-    thunder_shock = Attack(name="Thunder Shock", cost={"Lightning": 1, "Colorless": 1}, damage=40)
-    scratch = Attack(name="Scratch", cost={"Colorless": 1}, damage=10)
-    ember = Attack(name="Ember", cost={"Fire": 1}, damage=30)
-    bite = Attack(name="Bite", cost={"Colorless": 1}, damage=10)
-    low_kick = Attack(name="Low Kick", cost={"Fighting": 1}, damage=20)
-    bubble = Attack(name="Bubble", cost={"Water": 1}, damage=10)
+    vine_whip = Attack(name="Vine Whip", cost={"Grass": 1, "Colorless": 1}, damage=40)
+    scratch = Attack(name="Scratch", cost={"Fire": 1}, damage=20)
+    water_gun = Attack(name="Water Gun", cost={"Water": 1}, damage=20)
+    gnaw = Attack(name="Gnaw", cost={"Electric": 1}, damage=20)
 
     # pokemon with name, hp, attacks, type, and weaknesses
-    pika = PokemonCard("Pikachu", 60, [quick_attack, thunder_shock], pokemon_type="Lightning", weakness_type="Fighting")
-    char = PokemonCard("Charmander", 70, [scratch, ember], pokemon_type="Fire", weakness_type="Water")
-    rattata = PokemonCard("Rattata", 40, [bite], pokemon_type="Colorless")
-    mankey = PokemonCard("Mankey", 60, [low_kick], pokemon_type="Fighting", weakness_type="Psychic")
-    squirtle = PokemonCard("Squirtle", 60, [bubble], pokemon_type="Water", weakness_type="Lightning")
+    bulba = PokemonCard("Bulbasaur", 70, [vine_whip], "Grass", "Fire", False, True)
+    slandit = PokemonCard("Slandit", 60, [scratch], "Fire", "Water", False, True)
+    squirtle = PokemonCard("Squirtle", 60, [water_gun], "Water", "Electric", False, True)
+    pikachu = PokemonCard("Pikachu", 60, [gnaw], "Electric", "Fighting", False, True)
 
     # for now, i'll just create simple decks that are illegal (can only have 2 of each card)
-    deck1_cards = [pika] * 2 + [rattata] * 8 + [mankey] * 10
-    deck2_cards = [char] * 2 + [squirtle] * 8 + [rattata] * 10
+    deck1_cards = [pikachu] * 6 + [bulba] * 6 + [slandit] * 8
+    deck2_cards = [bulba] * 6 + [pikachu] * 6 + [slandit] * 8
     random.shuffle(deck1_cards)
     random.shuffle(deck2_cards)
 
