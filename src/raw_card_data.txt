@@ -1,0 +1,132 @@
+Darkrai ex
+- Darkness - 140 HP
+
+Pokémon - Basic
+
+Ability: Nightmare Aura
+
+Whenever you attach a [D] Energy from your Energy Zone to this Pokémon, do 20 damage to your opponent's Active Pokémon.
+
+DDC Dark Prism 80
+
+Weakness: Grass
+Retreat: 2
+
+ex rule: When your Pokémon ex is Knocked Out, your opponent gets 2 points.
+
+
+Giratina ex
+- Psychic - 150 HP
+
+Pokémon - Basic
+
+Ability: Broken-Space Bellow
+
+Once during your turn, you may take a [P] Energy from your Energy Zone and attach it to this Pokémon. If you use this Ability, your turn ends.
+
+PPPC Chaotic Impact 130
+
+This Pokémon also does 20 damage to itself.
+
+Weakness: Darkness
+Retreat: 2
+
+ex rule: When your Pokémon ex is Knocked Out, your opponent gets 2 points.
+
+
+Professor's Research
+
+Trainer - Supporter
+
+Draw 2 cards.
+
+
+Poké Ball
+
+Trainer - Item
+
+Put 1 random Basic Pokemon from your deck into your hand.
+
+
+Red
+
+Trainer - Supporter
+
+During this turn, attacks used by your Pokémon do +20 damage to your opponent's Active Pokémon ex.
+
+
+Giant Cape
+
+Trainer - Tool
+
+The Pokémon this card is attached to gets +20 HP.
+
+
+Rocky Helmet
+
+Trainer - Tool
+
+If the Pokémon this card is attached to is in the Active Spot and is damaged by an attack from your opponent's Pokémon, do 20 damage to the Attacking Pokémon.
+
+
+Sabrina
+
+Trainer - Supporter
+
+Switch out your opponent's Active Pokémon to the Bench. (Your opponent chooses the new Active Pokémon.)
+
+
+Cyrus
+
+Trainer - Supporter
+
+Switch in 1 of your opponent's Benched Pokémon that has damage on it to the Active Spot.
+
+
+Mars
+
+Trainer - Supporter
+
+Your opponent shuffles their hand into their deck and draws a card for each of their remaining points needed to win.
+
+
+Potion
+
+Trainer - Item
+
+Heal 20 damage from 1 of your Pokémon.
+
+
+Pokémon Center Lady
+
+Trainer - Supporter
+
+Heal 30 damage from 1 of your Pokémon, and it recovers from all Special Conditions.
+
+
+Leaf
+
+Trainer - Supporter
+
+During this turn, the Retreat Cost of your Active Pokémon is 2 less.
+
+
+Dawn
+
+Trainer - Supporter
+
+Move an Energy from 1 of your Benched Pokémon to your Active Pokémon.
+
+
+Team Rocket Grunt
+
+Trainer - Supporter
+
+Flip a coin until you get tails. For each heads, discard a random Energy from your opponent's Active Pokémon.
+
+
+Iono
+
+Trainer - Supporter
+
+Each player shuffles the cards in their hand into their deck, then draws that many cards.

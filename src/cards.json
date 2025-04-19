@@ -1,0 +1,158 @@
+[
+  {
+    "name": "Darkrai ex",
+    "card_type": "Pokemon",
+    "hp": 140,
+    "pokemon_type": "Darkness",
+    "is_basic": true,
+    "is_ex": true,
+    "weakness_type": "Grass",
+    "retreat_cost": 2,
+    "attacks": [
+      {
+        "name": "Dark Prism",
+        "cost": {
+          "Darkness": 2,
+          "Colorless": 1
+        },
+        "damage": 80,
+        "effect_text": null,
+        "effect_tag": null
+      }
+    ],
+    "ability": {
+      "name": "Nightmare Aura",
+      "text": "Whenever you attach a [D] Energy from your Energy Zone to this Pokémon, do 20 damage to your opponent's Active Pokémon.",
+      "type": "Passive",
+      "cost": null,
+      "effect_tag": "ABILITY_NIGHTMARE_AURA_WHENEVER_YOU_ATTACH_A_D_ENE"
+    }
+  },
+  {
+    "name": "Giratina ex",
+    "card_type": "Pokemon",
+    "hp": 150,
+    "pokemon_type": "Psychic",
+    "is_basic": true,
+    "is_ex": true,
+    "weakness_type": "Darkness",
+    "retreat_cost": 2,
+    "attacks": [
+      {
+        "name": "Chaotic Impact",
+        "cost": {
+          "Psychic": 3,
+          "Colorless": 1
+        },
+        "damage": 130,
+        "effect_text": "This Pokémon also does 20 damage to itself.",
+        "effect_tag": "ATTACK_CHAOTIC_IMPACT_THIS_POKÉMON_ALSO_DOES_20_DA"
+      }
+    ],
+    "ability": {
+      "name": "Broken-Space Bellow",
+      "text": "Once during your turn, you may take a [P] Energy from your Energy Zone and attach it to this Pokémon. If you use this Ability, your turn ends.",
+      "type": "Active",
+      "cost": null,
+      "effect_tag": "ABILITY_BROKEN_SPACE_BELLOW_ONCE_DURING_YOUR_TURN_"
+    }
+  },
+  {
+    "name": "Professor's Research",
+    "card_type": "Supporter",
+    "is_ex": false,
+    "effect_text": "Draw 2 cards.",
+    "effect_tag": "TRAINER_SUPPORTER_PROFESSOR_S_RESEARCH_DRAW_2_CARD"
+  },
+  {
+    "name": "Poké Ball",
+    "card_type": "Item",
+    "is_ex": false,
+    "effect_text": "Put 1 random Basic Pokemon from your deck into your hand.",
+    "effect_tag": "TRAINER_ITEM_POKÉ_BALL_PUT_1_RANDOM_BASIC_POKEMON_"
+  },
+  {
+    "name": "Red",
+    "card_type": "Supporter",
+    "is_ex": false,
+    "effect_text": "During this turn, attacks used by your Pokémon do +20 damage to your opponent's Active Pokémon ex.",
+    "effect_tag": "TRAINER_SUPPORTER_RED_DURING_THIS_TURN_ATTACKS_USE"
+  },
+  {
+    "name": "Giant Cape",
+    "card_type": "Tool",
+    "is_ex": false,
+    "effect_text": "The Pokémon this card is attached to gets +20 HP.",
+    "effect_tag": "TRAINER_TOOL_GIANT_CAPE_THE_POKÉMON_THIS_CARD_IS_A"
+  },
+  {
+    "name": "Rocky Helmet",
+    "card_type": "Tool",
+    "is_ex": false,
+    "effect_text": "If the Pokémon this card is attached to is in the Active Spot and is damaged by an attack from your opponent's Pokémon, do 20 damage to the Attacking Pokémon.",
+    "effect_tag": "TRAINER_TOOL_ROCKY_HELMET_IF_THE_POKÉMON_THIS_CARD"
+  },
+  {
+    "name": "Sabrina",
+    "card_type": "Supporter",
+    "is_ex": false,
+    "effect_text": "Switch out your opponent's Active Pokémon to the Bench. (Your opponent chooses the new Active Pokémon.)",
+    "effect_tag": "TRAINER_SUPPORTER_SABRINA_SWITCH_OUT_YOUR_OPPONENT"
+  },
+  {
+    "name": "Cyrus",
+    "card_type": "Supporter",
+    "is_ex": false,
+    "effect_text": "Switch in 1 of your opponent's Benched Pokémon that has damage on it to the Active Spot.",
+    "effect_tag": "TRAINER_SUPPORTER_CYRUS_SWITCH_IN_1_OF_YOUR_OPPONE"
+  },
+  {
+    "name": "Mars",
+    "card_type": "Supporter",
+    "is_ex": false,
+    "effect_text": "Your opponent shuffles their hand into their deck and draws a card for each of their remaining points needed to win.",
+    "effect_tag": "TRAINER_SUPPORTER_MARS_YOUR_OPPONENT_SHUFFLES_THEI"
+  },
+  {
+    "name": "Potion",
+    "card_type": "Item",
+    "is_ex": false,
+    "effect_text": "Heal 20 damage from 1 of your Pokémon.",
+    "effect_tag": "TRAINER_ITEM_POTION_HEAL_20_DAMAGE_FROM_1_OF_YOUR_"
+  },
+  {
+    "name": "Pokémon Center Lady",
+    "card_type": "Supporter",
+    "is_ex": false,
+    "effect_text": "Heal 30 damage from 1 of your Pokémon, and it recovers from all Special Conditions.",
+    "effect_tag": "TRAINER_SUPPORTER_POKÉMON_CENTER_LADY_HEAL_30_DAMA"
+  },
+  {
+    "name": "Leaf",
+    "card_type": "Supporter",
+    "is_ex": false,
+    "effect_text": "During this turn, the Retreat Cost of your Active Pokémon is 2 less.",
+    "effect_tag": "TRAINER_SUPPORTER_LEAF_DURING_THIS_TURN_THE_RETREA"
+  },
+  {
+    "name": "Dawn",
+    "card_type": "Supporter",
+    "is_ex": false,
+    "effect_text": "Move an Energy from 1 of your Benched Pokémon to your Active Pokémon.",
+    "effect_tag": "TRAINER_SUPPORTER_DAWN_MOVE_AN_ENERGY_FROM_1_OF_YO"
+  },
+  {
+    "name": "Team Rocket Grunt",
+    "card_type": "Supporter",
+    "is_ex": false,
+    "effect_text": "Flip a coin until you get tails. For each heads, discard a random Energy from your opponent's Active Pokémon.",
+    "effect_tag": "TRAINER_SUPPORTER_TEAM_ROCKET_GRUNT_FLIP_A_COIN_UN"
+  },
+  {
+    "name": "Iono",
+    "card_type": "Supporter",
+    "is_ex": false,
+    "effect_text": "Each player shuffles the cards in their hand into their deck, then draws that many cards.",
+    "effect_tag": "TRAINER_SUPPORTER_IONO_EACH_PLAYER_SHUFFLES_THE_CA"
+  }
+]
