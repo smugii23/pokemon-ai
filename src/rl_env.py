@@ -1,5 +1,6 @@
 # rl_env.py (Corrected and Refined)
 
+import time
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
@@ -305,51 +306,70 @@ class PokemonTCGPocketEnv(gym.Env):
     
     def _load_opponent_policy(self) -> bool:
         """Loads a policy for the opponent from a checkpoint file."""
+        # Use a temporary variable to store the status message/name
+        current_opponent_status = "None Loaded"
+
         if MaskablePPO is None: # Check if import failed
              print("ERROR: Cannot load opponent policy, Stable Baselines 3 not installed.")
+             current_opponent_status = "SB3 Error"
+             self._opponent_policy = None; self._opponent_vec_normalize_stats = None # Ensure reset
+             self.loaded_opponent_basename = current_opponent_status # Update status
              return False
-        
+
         checkpoints = self._find_opponent_checkpoints()
         if not checkpoints:
             if self.render_mode: print("No opponent checkpoints found. Opponent will play randomly (or use fallback).")
+            current_opponent_status = "Random/Fallback" # Set status here
             self._opponent_policy = None
             self._opponent_vec_normalize_stats = None
+            self.loaded_opponent_basename = current_opponent_status # Update status
             return False # Indicate no policy loaded
+
+        # Select checkpoint (logic remains the same)
         if self.always_load_latest_opponent:
             selected_checkpoint_path = checkpoints[0]
         else:
-            # Select from the pool of recent checkpoints
             pool_size = self.opponent_pool_size if self.opponent_pool_size > 0 else len(checkpoints)
             pool = checkpoints[:min(pool_size, len(checkpoints))]
             selected_checkpoint_path = random.choice(pool)
 
-        # Corresponding VecNormalize stats file path
         stats_path = selected_checkpoint_path.replace(".zip", "_vecnormalize.pkl")
 
         try:
             if self.render_mode: print(f"Loading opponent policy from: {selected_checkpoint_path}")
-            # Load the model - assumes MaskablePPO, change if using a different SB3 algo
-            # device='auto' should be fine, but 'cpu' might be safer if environment runs on different hardware
             loaded_model = MaskablePPO.load(selected_checkpoint_path, device='cpu')
-            self._opponent_policy = loaded_model.policy # Store only the policy network
-            self._opponent_policy.set_training_mode(False) # Ensure it's in inference mode
+            self._opponent_policy = loaded_model.policy
+            self._opponent_policy.set_training_mode(False)
+            current_opponent_status = os.path.basename(selected_checkpoint_path) # Set status on success
 
-            # Store path to stats; actual normalization happens just before prediction
             if os.path.exists(stats_path):
                  self._opponent_vec_normalize_stats = stats_path
                  if self.render_mode: print(f"Found opponent VecNormalize stats: {stats_path}")
             else:
-                 self._opponent_vec_normalize_stats = None # Will use current stats if not found
-                 if self.render_mode: print(f"Warning: VecNormalize stats not found at {stats_path}. Opponent might use stale normalization.")
+                 self._opponent_vec_normalize_stats = None
+                 if self.render_mode: print(f"Warning: VecNormalize stats not found at {stats_path}.")
 
+            self.loaded_opponent_basename = current_opponent_status # Update status
             return True # Policy loaded successfully
+
         except Exception as e:
             print(f"ERROR loading opponent policy from {selected_checkpoint_path}: {e}")
+            current_opponent_status = f"ERROR loading {os.path.basename(selected_checkpoint_path)}" # Set error status
             traceback.print_exc()
             self._opponent_policy = None
             self._opponent_vec_normalize_stats = None
+            self.loaded_opponent_basename = current_opponent_status # Update status
             return False
 
+    def _get_info(self) -> Dict[str, Any]:
+        """Returns auxiliary information."""
+        # Keep this simple - episode info added on termination
+        info = {
+             "agent_player_idx": self.agent_player_idx,
+             "turn_number": self.game.game_state.turn_number if self.game else 0,
+             "loaded_opponent": self.loaded_opponent_basename
+        }
+        return info
 
 
     def _setup_new_game(self):
@@ -626,113 +646,178 @@ class PokemonTCGPocketEnv(gym.Env):
              raise RuntimeError("step() called before reset().")
 
         terminated = False
-        truncated = False # Not used
-        reward = 0.0      # Reward for the learning agent
+        truncated = False
+        reward = 0.0
+        info = {} # Start with empty info for this step
 
         # --- Execute Agent's Action ---
         action_str = ID_TO_ACTION.get(action)
         if action_str is None:
+            # ... (Handling for invalid action ID - remains the same) ...
             print(f"Warning: Agent provided invalid action ID {action}. Taking no action, assigning penalty.")
             reward = -1.0
-            terminated = False # Don't end game for invalid agent action? Or maybe should?
-            # Proceed to opponent's turn simulation if applicable
+            terminated = False
+            info["error"] = f"Invalid action ID {action}"
         else:
+            # --- Agent Action Execution Block ---
             if self.render_mode == "human":
                 print(f"\n>>> Agent ({self.agent_player.name}) Action: {action_str} (ID: {action})")
-
             try:
-                _next_state_dict, step_reward, terminated = self.game.step(action_str)
-                reward += float(step_reward) # Accumulate reward for the agent
+                _next_state_dict, step_reward, game_terminated = self.game.step(action_str)
+                reward += float(step_reward)
+                terminated = game_terminated # Update terminated flag
 
-                # Check if game ended immediately after agent's action
                 if terminated:
+                     # Game ended after agent's action
                      observation = self._get_obs(self.agent_player)
-                     info = self._get_info()
+                     info = self._get_info() # Get standard info
+                     # --- Determine Winner ---
+                     agent_won = 0.0
+                     if self.agent_player.points >= POINTS_TO_WIN: agent_won = 1.0
+                     elif self.opponent_player.points >= POINTS_TO_WIN: agent_won = 0.0
+                     elif self.game.game_state.turn_number > self.game.turn_limit: agent_won = 0.5
+                     # --- Populate TOP LEVEL Info for Monitor ---
+                     info['w'] = agent_won # Add 'w' directly
+                     # Monitor will add/use 'r', 'l', 't'
+                     info['r'] = reward # Pass current step reward
+                     info['l'] = self.game.game_state.turn_number # Pass current length
+                     info['t'] = time.time() # Pass current time
+                     info["final_observation"] = observation
+                     info['TimeLimit.truncated'] = False
+                     # --- End Monitor Info Population ---
+
                      if self.render_mode: self.render()
-                     return observation, reward, terminated, truncated, info
+                     # print(f"[DEBUG ENV STEP EARLY RETURN] Terminated={terminated}, Info={info}") # Optional Debug
+                     return observation, reward, terminated, truncated, info # Return immediately
+
 
             except Exception as e:
+                # ... (Error handling for agent's step - remains the same) ...
                 print(f"FATAL ERROR during game.step with AGENT action '{action_str}'")
                 traceback.print_exc()
-                observation = self._get_obs(self.agent_player) # Get last state
-                reward = -10.0; terminated = True; info = self._get_info(); info["error"] = f"Agent step exception: {e}"
+                observation = self._get_obs(self.agent_player); reward = -10.0; terminated = True; info = self._get_info(); info["error"] = f"Agent step exception: {e}"
+                # Optionally add info['episode'] here too if you want to record loss on error
+                # info['episode'] = {'w': 0.0, 'r': reward, 'l': self.game.game_state.turn_number}
                 return observation, reward, terminated, truncated, info
 
-        # --- Simulate Opponent's Turn(s) if it's their turn ---
-        opponent_accumulated_reward = 0.0 # Track opponent reward separately
-        while not terminated and self.game.game_state.current_player_index != self.agent_player_idx:
-             terminated, reward_opp = self._simulate_opponent_turn()
-             opponent_accumulated_reward += reward_opp
-             # The loop inside _simulate_opponent_turn should break when it's agent's turn
+        # --- Simulate Opponent's Turn(s) only if game didn't end on agent's turn ---
+        opponent_accumulated_reward = 0.0
+        if not terminated:
+            try:
+                while not terminated and self.game.game_state.current_player_index != self.agent_player_idx:
+                    game_terminated_opp, reward_opp = self._simulate_opponent_turn()
+                    opponent_accumulated_reward += reward_opp
+                    terminated = game_terminated_opp # Update terminated flag
+
+            except Exception as e:
+                 # ... (Error handling for opponent simulation - remains the same) ...
+                 print(f"ERROR during opponent turn simulation: {e}")
+                 traceback.print_exc()
+                 terminated = True # Assume game is broken
+                 info["error"] = f"Opponent simulation exception: {e}"
+                 # We will determine winner and add info['episode'] below
 
         # --- Get Final State for Agent ---
         observation = self._get_obs(self.agent_player)
+        # Get standard info first, might be overwritten by episode info if terminated
         info = self._get_info()
 
+        # --- ADDED BLOCK: Check termination *after* opponent simulation ---
+        if terminated: # Check if episode info wasn't already set by agent's win
+             if 'w' not in info: # Check if 'w' wasn't already added
+                 # Determine winner based on state AFTER opponent's turn(s)
+                 agent_won = 0.0
+                 if self.agent_player.points >= POINTS_TO_WIN: agent_won = 1.0
+                 elif self.opponent_player.points >= POINTS_TO_WIN: agent_won = 0.0
+                 elif self.game.game_state.turn_number > self.game.turn_limit: agent_won = 0.5
+                 # --- Populate TOP LEVEL Info for Monitor ---
+                 info['w'] = agent_won # Add 'w' directly
+                 info['r'] = reward # Use agent's reward from its step
+                 info['l'] = self.game.game_state.turn_number
+                 info['t'] = time.time()
+                 info["final_observation"] = observation
+                 info['TimeLimit.truncated'] = False
+                 # --- End Monitor Info Population ---
+
+        # --- END ADDED BLOCK ---
+
+        # --- Rendering ---
         if self.render_mode == "human":
-            self.render() # Render final state before returning
+            self.render()
             print(f"<<< Step Result: Agent Reward={reward}, Terminated={terminated}")
         elif self.render_mode == "text":
             self._render_text(action_str, reward, terminated)
 
         return observation, reward, terminated, truncated, info
-    
+        
     def reset(self, seed: Optional[int] = None, options: Optional[Dict] = None):
         super().reset(seed=seed)
-        self._setup_new_game() # Creates self.game
+        self._setup_new_game()
+        self._load_opponent_policy()
 
-        # --- MODIFICATION: Load opponent and determine roles ---
-        self._load_opponent_policy() # Load historical opponent
+        if self.game is None:
+            raise RuntimeError("Game object not initialized after _setup_new_game.")
 
-        if self.game is None: # Safety check after _setup_new_game
-             raise RuntimeError("Game object not initialized after _setup_new_game.")
-
-        self.agent_player_idx = random.choice([0, 1]) # Agent is randomly P1 (idx 0) or P2 (idx 1)
-
-        # --- MODIFICATION START: Access players correctly ---
+        self.agent_player_idx = random.choice([0, 1])
         if self.agent_player_idx == 0:
             self.agent_player = self.game.player1
             self.opponent_player = self.game.player2
         else:
             self.agent_player = self.game.player2
             self.opponent_player = self.game.player1
-        # --- MODIFICATION END ---
 
         print(f"Game Reset: Agent is Player {self.agent_player_idx + 1} ({self.agent_player.name})")
 
-        # --- MODIFICATION: Handle if opponent goes first ---
         initial_observation = None
-        try: # Add try-except around opponent simulation loop
+        terminated = False # Flag if game ends during opponent's first turn
+        info = {} # Initialize info dict
+
+        try:
             while self.game.game_state.current_player_index != self.agent_player_idx:
                 if self.render_mode == "human": print("Opponent starts first...")
+                # Simulate opponent turn, get terminated status
                 opponent_done, _ = self._simulate_opponent_turn()
                 if opponent_done:
-                    print("Warning: Game ended during opponent's first turn simulation.")
+                    terminated = True
                     initial_observation = self._get_obs(self.agent_player)
-                    break # Exit the loop, return the current observation
+                    # --- Determine Winner and Populate TOP LEVEL Info ---
+                    agent_won = 0.0
+                    if self.agent_player and self.opponent_player:
+                        if self.opponent_player.points >= POINTS_TO_WIN: agent_won = 0.0
+                        elif self.agent_player.points >= POINTS_TO_WIN: agent_won = 1.0
+                        elif self.game.game_state.turn_number > self.game.turn_limit: agent_won = 0.5
+
+                    # Add 'w' directly to info dict
+                    info['w'] = agent_won
+                    # Monitor also needs 'r', 'l', 't' potentially (add defaults)
+                    info['r'] = 0.0 # No reward for agent yet
+                    info['l'] = self.game.game_state.turn_number
+                    info['t'] = time.time() # Monitor uses time
+
+                    # Store final observation for SB3 >= v2.10 / Gymnasium >= v0.26
+                    info["final_observation"] = initial_observation
+                    info['TimeLimit.truncated'] = False
+                    break # Exit loop
         except Exception as e:
              print(f"ERROR during initial opponent turn simulation: {e}")
              traceback.print_exc()
-             # Handle error: maybe return a default observation or raise
-             initial_observation = self._get_obs(self.agent_player) # Get observation even if error occurred
-
-        # --- End Opponent First Turn Simulation ---
+             initial_observation = self._get_obs(self.agent_player)
+             # If error, maybe don't populate 'episode' info, let next step handle termination?
 
         if initial_observation is None:
             initial_observation = self._get_obs(self.agent_player)
 
-        info = self._get_info()
-        if self.render_mode == "human": self.render()
-        return initial_observation, info
+        # If terminated during reset, info is already populated
+        # Otherwise, get standard info
+        if not terminated:
+             info = self._get_info()
 
-    def _get_info(self) -> Dict[str, Any]:
-        """Returns auxiliary information."""
-        # In self-play, info should reflect the learning agent's perspective
-        return {
-             "agent_player_idx": self.agent_player_idx,
-             "turn_number": self.game.game_state.turn_number if self.game else 0,
-             "opponent_policy_path": self._opponent_vec_normalize_stats # Log which opponent was loaded
-        }
+        final_obs = initial_observation
+        final_info = info if info is not None else {}
+
+        if self.render_mode == "human": self.render()
+        # print(f"[DEBUG ENV RESET RETURN] Terminated={terminated}, Info={final_info}") # Optional Debug
+        return final_obs, final_info
     
     def _simulate_opponent_turn(self) -> Tuple[bool, float]:
         """

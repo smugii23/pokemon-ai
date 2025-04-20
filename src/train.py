@@ -1,5 +1,6 @@
 # train.py (Modified for Self-Play Env and Opponent Checkpoints)
 
+from collections import deque
 import os
 import sys
 import time
@@ -78,6 +79,44 @@ class TqdmCallback(BaseCallback):
         if self.num_timesteps - self.last_print_step >= 10000: # Print every 10k steps
             print(f"\n[Callback Debug] TqdmCallback: _on_step CALLED (step {self.num_timesteps})") # Add newline
             self.last_print_step = self.num_timesteps
+
+        return True
+
+class WinRateCallback(BaseCallback):
+    def __init__(self, check_freq: int, log_name: str = "rollout/ep_win_rate", verbose: int = 0):
+        super().__init__(verbose)
+        self.check_freq = check_freq
+        self.log_name = log_name
+        self.win_buffer = deque(maxlen=100)
+
+    def _on_step(self) -> bool:
+        """
+        Check Monitor's info dict for episode termination keys ('r', 'l', 't')
+        and attempt to find our custom 'w' key.
+        """
+        for i, done in enumerate(self.locals["dones"]):
+            if done:
+                info = self.locals["infos"][i] # Get the full info dict for this env
+
+                # --- DEBUG: Print the entire info dict when done ---
+                print(f"[DEBUG CB] Env {i} is done. Full Info Dict: {info}")
+
+                # --- Try accessing 'w' directly (might be added by Monitor?) ---
+                win_status = info.get("w") # Check top-level info
+
+                # --- If not found directly, check inside 'episode' again ---
+                if win_status is not None and isinstance(win_status, (float, int)):
+                    # print(f"[DEBUG CB] Found win status {win_status} for env {i} in top-level info. Adding to buffer.") # Optional Debug
+                    self.win_buffer.append(float(win_status))
+
+
+        # Log the mean win rate periodically (logic remains the same)
+        if self.num_timesteps % self.check_freq == 0 and self.num_timesteps > 0:
+            if len(self.win_buffer) > 0:
+                mean_win_rate = np.mean(self.win_buffer)
+                if self.verbose > 0:
+                    print(f"\nStep: {self.num_timesteps}, Logging Mean Win Rate ({len(self.win_buffer)} episodes): {mean_win_rate:.3f}")
+                self.logger.record(self.log_name, mean_win_rate)
 
         return True
 
@@ -213,7 +252,10 @@ def train_agent():
         name_prefix="ppo_opponent",
         save_replay_buffer=False, save_vecnormalize=True, verbose=1
     )
-    callback_list = [tqdm_callback, agent_checkpoint_callback, opponent_checkpoint_callback]
+    winrate_log_freq = max(MODEL_SAVE_FREQ // NUM_ENVIRONMENTS, 1) // 5 # Example: Log 5 times between agent saves
+    if winrate_log_freq < 1000: winrate_log_freq = 1000 # Ensure reasonable frequency
+    winrate_callback = WinRateCallback(check_freq=winrate_log_freq, verbose=1)
+    callback_list = [tqdm_callback, agent_checkpoint_callback, opponent_checkpoint_callback, winrate_callback]
 
     # --- Training (remains the same) ---
     try:
