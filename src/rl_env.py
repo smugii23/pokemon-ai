@@ -251,7 +251,8 @@ class PokemonTCGPocketEnv(gym.Env):
     def __init__(self, render_mode: Optional[str] = None,
                  opponent_checkpoints_dir: str = "models/ppo_checkpoints", # Dir to load opponents from
                  opponent_pool_size: int = 5, # How many recent checkpoints to sample from (-1 for all)
-                 always_load_latest_opponent: bool = False # For debugging: always use latest ckpt
+                 always_load_latest_opponent: bool = False,
+                 load_opponent_every_n_resets: int = 1
                  ):
         super().__init__()
         self.render_mode = render_mode
@@ -259,6 +260,8 @@ class PokemonTCGPocketEnv(gym.Env):
         self.opponent_checkpoints_dir = opponent_checkpoints_dir
         self.opponent_pool_size = opponent_pool_size
         self.always_load_latest_opponent = always_load_latest_opponent
+        self.load_opponent_every_n_resets = max(1, load_opponent_every_n_resets)
+        self._reset_counter = 0
         self._opponent_policy: Optional[BasePolicy] = None # Loaded policy network
         self._opponent_vec_normalize_stats: Optional[str] = None # Path to vecnormalize stats for the opponent model
 
@@ -751,9 +754,12 @@ class PokemonTCGPocketEnv(gym.Env):
         return observation, reward, terminated, truncated, info
         
     def reset(self, seed: Optional[int] = None, options: Optional[Dict] = None):
-        super().reset(seed=seed)
+        super().reset(seed=26)
+        self._reset_counter += 1
+        if self._opponent_policy is None or (self._reset_counter % self.load_opponent_every_n_resets == 0):
+             print(f"[Reset Env] Reset counter {self._reset_counter}. Attempting to load NEW opponent policy...")
+             self._load_opponent_policy() # Load/reload opponent policy
         self._setup_new_game()
-        self._load_opponent_policy()
 
         if self.game is None:
             raise RuntimeError("Game object not initialized after _setup_new_game.")

@@ -37,6 +37,7 @@ VEC_NORMALIZE_SAVE_PATH = os.path.join(os.path.dirname(MODEL_SAVE_PATH), "vecnor
 # --- Opponent Checkpoint Configuration ---
 OPPONENT_CHECKPOINT_FREQ = 500000 # How often to save a version for the opponent pool (adjust)
 CLEAN_CHECKPOINTS_ON_START = False # Set to True to remove old checkpoints before new training
+N_RESETS_BEFORE_NEW_OPPONENT = 50
 
 # --- PPO Hyperparameters (Keep or adjust) ---
 HYPERPARAMS = {
@@ -172,7 +173,7 @@ def train_agent():
 
     # --- Create VecEnv (CORRECTED CALL) ---
     print(f"Creating VecEnv with {NUM_ENVIRONMENTS} environments...")
-    env_kwargs_dict = {'opponent_checkpoints_dir': CHECKPOINT_DIR}
+    env_kwargs_dict = {'opponent_checkpoints_dir': CHECKPOINT_DIR, 'load_opponent_every_n_resets': N_RESETS_BEFORE_NEW_OPPONENT}
     vec_env_cls = SubprocVecEnv if NUM_ENVIRONMENTS > 1 else DummyVecEnv
     start_method = 'fork' if os.name != 'nt' and NUM_ENVIRONMENTS > 1 else 'spawn'
 
