@@ -6,6 +6,7 @@ import numpy as np
 import random
 from typing import List, Optional, Dict, Tuple, Any
 import copy
+import glob 
 import traceback # For detailed error printing
 import os # For process ID and other OS-related functionality
 
@@ -23,6 +24,10 @@ try:
         ACTION_SETUP_CHOOSE_BENCH_FROM_HAND_PREFIX,
         ACTION_SETUP_CONFIRM_READY
     )
+    from stable_baselines3.common.policies import BasePolicy
+    from stable_baselines3.common.base_class import BaseAlgorithm
+    from stable_baselines3.common.vec_env import VecNormalize
+    from sb3_contrib import MaskablePPO # Assuming MaskablePPO
 except ImportError:
     # Fallback for running script directly if simulator is in the same dir (less ideal)
     print("Warning: Could not import from simulator package. Assuming simulator modules are in the current directory.")
@@ -40,6 +45,10 @@ except ImportError:
         ACTION_USE_ABILITY_ACTIVE, ACTION_PLAY_SUPPORTER_PREFIX, ACTION_PLAY_ITEM_PREFIX,
         ACTION_ATTACH_TOOL_ACTIVE, ACTION_ATTACH_TOOL_BENCH_PREFIX, ACTION_RETREAT_TO_BENCH_PREFIX # Added retreat
     )
+    BaseAlgorithm = None
+    BasePolicy = None
+    VecNormalize = None
+    MaskablePPO = None
 
 
 # --- Constants Definition ---
@@ -233,44 +242,40 @@ FLATTENED_OBS_SIZE = (
 
 class PokemonTCGPocketEnv(gym.Env):
     """
-    Gymnasium environment for the Pokemon TCG Pocket Simulator.
-
-    Features:
-    - Flattened observation space (suitable for standard MLP policies).
-    - Discrete action space based on mapped game actions.
-    - Action masking support via the `action_mask_fn` method (for use with SB3-Contrib's ActionMasker wrapper and MaskablePPO).
+    Gymnasium environment for Pokemon TCG Pocket, modified for self-play training
+    against historical opponents.
     """
     metadata = {'render_modes': ['human', 'text'], 'render_fps': 1}
 
-    def __init__(self, render_mode: Optional[str] = None):
-        """
-        Initializes the environment.
-
-        Args:
-            render_mode: The mode for rendering ('human', 'text', or None).
-        """
+    def __init__(self, render_mode: Optional[str] = None,
+                 opponent_checkpoints_dir: str = "models/ppo_checkpoints", # Dir to load opponents from
+                 opponent_pool_size: int = 5, # How many recent checkpoints to sample from (-1 for all)
+                 always_load_latest_opponent: bool = False # For debugging: always use latest ckpt
+                 ):
         super().__init__()
+        self.render_mode = render_mode
+        # --- MODIFICATION: Store opponent config ---
+        self.opponent_checkpoints_dir = opponent_checkpoints_dir
+        self.opponent_pool_size = opponent_pool_size
+        self.always_load_latest_opponent = always_load_latest_opponent
+        self._opponent_policy: Optional[BasePolicy] = None # Loaded policy network
+        self._opponent_vec_normalize_stats: Optional[str] = None # Path to vecnormalize stats for the opponent model
 
-        if render_mode not in (None, 'human', 'text'):
-             print(f"Warning: Invalid render_mode '{render_mode}'. Defaulting to None.")
-             self.render_mode = None
-        else:
-             self.render_mode = render_mode
-
-        # --- Observation Space ---
-        # A single flat vector of floats. Normalization (e.g., using VecNormalize)
-        # is recommended during training as values have different scales (HP vs flags).
+        # --- Observation/Action Spaces (remain the same, using updated FLATTENED_OBS_SIZE) ---
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, shape=(FLATTENED_OBS_SIZE,), dtype=np.float32
         )
-
-        # --- Action Space ---
-        # A single integer representing one of the possible mapped actions.
         self.action_space = spaces.Discrete(NUM_POSSIBLE_ACTIONS)
 
-        # --- Game Instance ---
-        # The core simulator object. Initialized in reset().
         self.game: Optional[Game] = None
+        # --- MODIFICATION: Distinguish learning agent player ---
+        self.agent_player_idx: Optional[int] = None # 0 or 1, who is the learning agent?
+        self.agent_player: Optional[Player] = None # Reference to agent's Player object
+        self.opponent_player: Optional[Player] = None # Reference to opponent's Player object
+
+        print(f"Environment Initialized (Self-Play Mode):")
+        print(f"  Opponent Checkpoint Dir: {self.opponent_checkpoints_dir}")
+        print(f"  Opponent Pool Size: {self.opponent_pool_size}")
         # Reference to the player whose turn it currently is within the game state.
         # Updated during reset() and step().
         self.current_player: Optional[Player] = None
@@ -286,6 +291,65 @@ class PokemonTCGPocketEnv(gym.Env):
         print(f"  Max Bench Size: {MAX_BENCH_SIZE}")
         print(f"  Max Attacks per Pokemon (Env Assumption): {MAX_ATTACKS_PER_POKEMON}")
         print(f"  Points to Win: {POINTS_TO_WIN}")
+
+    def _find_opponent_checkpoints(self) -> List[str]:
+        """Finds saved model checkpoints in the specified directory."""
+        if not os.path.isdir(self.opponent_checkpoints_dir):
+            return []
+        # Find files matching the pattern (e.g., ppo_opponent_*_steps.zip)
+        pattern = os.path.join(self.opponent_checkpoints_dir, "ppo_opponent_*_steps.zip")
+        checkpoints = glob.glob(pattern)
+        # Sort by step number (extracted from filename) to get recent ones
+        checkpoints.sort(key=lambda f: int(f.split('_')[-2]), reverse=True)
+        return checkpoints
+    
+    def _load_opponent_policy(self) -> bool:
+        """Loads a policy for the opponent from a checkpoint file."""
+        if MaskablePPO is None: # Check if import failed
+             print("ERROR: Cannot load opponent policy, Stable Baselines 3 not installed.")
+             return False
+        
+        checkpoints = self._find_opponent_checkpoints()
+        if not checkpoints:
+            if self.render_mode: print("No opponent checkpoints found. Opponent will play randomly (or use fallback).")
+            self._opponent_policy = None
+            self._opponent_vec_normalize_stats = None
+            return False # Indicate no policy loaded
+        if self.always_load_latest_opponent:
+            selected_checkpoint_path = checkpoints[0]
+        else:
+            # Select from the pool of recent checkpoints
+            pool_size = self.opponent_pool_size if self.opponent_pool_size > 0 else len(checkpoints)
+            pool = checkpoints[:min(pool_size, len(checkpoints))]
+            selected_checkpoint_path = random.choice(pool)
+
+        # Corresponding VecNormalize stats file path
+        stats_path = selected_checkpoint_path.replace(".zip", "_vecnormalize.pkl")
+
+        try:
+            if self.render_mode: print(f"Loading opponent policy from: {selected_checkpoint_path}")
+            # Load the model - assumes MaskablePPO, change if using a different SB3 algo
+            # device='auto' should be fine, but 'cpu' might be safer if environment runs on different hardware
+            loaded_model = MaskablePPO.load(selected_checkpoint_path, device='cpu')
+            self._opponent_policy = loaded_model.policy # Store only the policy network
+            self._opponent_policy.set_training_mode(False) # Ensure it's in inference mode
+
+            # Store path to stats; actual normalization happens just before prediction
+            if os.path.exists(stats_path):
+                 self._opponent_vec_normalize_stats = stats_path
+                 if self.render_mode: print(f"Found opponent VecNormalize stats: {stats_path}")
+            else:
+                 self._opponent_vec_normalize_stats = None # Will use current stats if not found
+                 if self.render_mode: print(f"Warning: VecNormalize stats not found at {stats_path}. Opponent might use stale normalization.")
+
+            return True # Policy loaded successfully
+        except Exception as e:
+            print(f"ERROR loading opponent policy from {selected_checkpoint_path}: {e}")
+            traceback.print_exc()
+            self._opponent_policy = None
+            self._opponent_vec_normalize_stats = None
+            return False
+
 
 
     def _setup_new_game(self):
@@ -362,7 +426,9 @@ class PokemonTCGPocketEnv(gym.Env):
             "num_attacks": len(pokemon.attacks)
         }
 
-    def _format_pokemon_obs(self, pokemon_state: Optional[Dict[str, Any]], include_can_attack=True) -> np.ndarray:
+    def _format_pokemon_obs(self, pokemon_state: Optional[Dict[str, Any]],
+                         include_can_attack=True,
+                         can_attack_flags_input: Optional[List[bool]] = None) -> np.ndarray:
         """
         Converts a Pokemon's state dictionary into a flat NumPy array segment
         for the observation vector. Handles padding and default values for non-existent Pokemon.
@@ -424,19 +490,20 @@ class PokemonTCGPocketEnv(gym.Env):
         return obs_array
 
 
-    def _get_obs(self) -> np.ndarray:
+    def _get_obs(self, perspective_player: Player) -> np.ndarray:
         """
-        Constructs the flattened observation vector from the current game state
-        from the perspective of the `self.current_player`. Includes opponent bench details.
+        Constructs the flattened observation vector from the perspective of the given player.
         """
-        if self.game is None or self.current_player is None:
-            print("Warning: _get_obs called before game reset. Returning zeros.")
+        if self.game is None:
             return np.zeros(FLATTENED_OBS_SIZE, dtype=np.float32)
 
-        state_dict = self.game.get_state_representation(self.current_player)
-        opponent = self.game.game_state.get_opponent()
+        # Determine opponent relative to the perspective player
+        opponent = self.game.player1 if perspective_player == self.game.player2 else self.game.player2
 
-        # --- My (Current Player) State ---
+        # Get the game state dictionary from the game's perspective function
+        state_dict = self.game.get_state_representation(perspective_player)
+
+        # --- My (Perspective Player) State ---
         my_hand_ids = [CARD_TO_ID.get(name, UNKNOWN_CARD_ID) for name in state_dict["my_hand_cards"]]
         my_hand_padded = np.pad(my_hand_ids, (0, MAX_HAND_SIZE - len(my_hand_ids)),
                                 constant_values=UNKNOWN_CARD_ID).astype(np.float32)
@@ -447,21 +514,23 @@ class PokemonTCGPocketEnv(gym.Env):
         my_energy_preview_id = np.array([ENERGY_TO_ID.get(state_dict["my_energy_stand_preview"], NO_ENERGY_ID)], dtype=np.float32)
 
         # My Active Pokemon
-        my_active_pokemon_obj = self.current_player.active_pokemon
-        my_active_state_dict = state_dict["my_active_pokemon"] # Get dict from game state
-        if my_active_state_dict and my_active_pokemon_obj: # Add calculated can_attack flags
-            my_active_state_dict["can_attack_flags_calculated"] = [my_active_pokemon_obj.can_attack(i) for i in range(len(my_active_pokemon_obj.attacks))]
-        my_active_flat = self._format_pokemon_obs(my_active_state_dict, include_can_attack=True)
+        my_active_pokemon_obj = perspective_player.active_pokemon
+        my_active_state_dict = state_dict["my_active_pokemon"]
+        can_attack_flags_active = None
+        if my_active_state_dict and my_active_pokemon_obj:
+            can_attack_flags_active = [my_active_pokemon_obj.can_attack(i) for i in range(len(my_active_pokemon_obj.attacks))]
+        my_active_flat = self._format_pokemon_obs(my_active_state_dict, include_can_attack=True, can_attack_flags_input=can_attack_flags_active)
 
         # My Bench Pokemon
         my_bench_flat_list = []
-        my_bench_pokemon_dicts = state_dict["my_bench_pokemon"] # List of dicts/None
+        my_bench_pokemon_dicts = state_dict["my_bench_pokemon"]
         for i in range(MAX_BENCH_SIZE):
-            pokemon_obj = self.current_player.bench[i] if i < len(self.current_player.bench) else None
-            bench_poke_state_dict = my_bench_pokemon_dicts[i] if i < len(my_bench_pokemon_dicts) else None # Get dict
-            if bench_poke_state_dict and pokemon_obj: # Add calculated can_attack flags
-                bench_poke_state_dict["can_attack_flags_calculated"] = [pokemon_obj.can_attack(i) for i in range(len(pokemon_obj.attacks))]
-            my_bench_flat_list.append(self._format_pokemon_obs(bench_poke_state_dict, include_can_attack=True))
+            pokemon_obj = perspective_player.bench[i] if i < len(perspective_player.bench) else None
+            bench_poke_state_dict = my_bench_pokemon_dicts[i] if i < len(my_bench_pokemon_dicts) else None
+            can_attack_flags_bench = None
+            if bench_poke_state_dict and pokemon_obj:
+                can_attack_flags_bench = [pokemon_obj.can_attack(i) for i in range(len(pokemon_obj.attacks))]
+            my_bench_flat_list.append(self._format_pokemon_obs(bench_poke_state_dict, include_can_attack=True, can_attack_flags_input=can_attack_flags_bench))
         my_bench_flat = np.concatenate(my_bench_flat_list)
 
         # --- Opponent State ---
@@ -473,297 +542,268 @@ class PokemonTCGPocketEnv(gym.Env):
         opp_energy_preview_id = np.array([ENERGY_TO_ID.get(state_dict["opp_energy_stand_status"]["preview"], NO_ENERGY_ID)], dtype=np.float32)
 
         # Opponent Active Pokemon
-        opp_active_state_dict = state_dict["opp_active_pokemon"] # Get dict
+        opp_active_state_dict = state_dict["opp_active_pokemon"]
         opp_active_flat = self._format_pokemon_obs(opp_active_state_dict, include_can_attack=False)
 
-        # --- MODIFICATION START: Opponent Bench Pokemon ---
+        # Opponent Bench Pokemon
         opp_bench_flat_list = []
-        opp_bench_pokemon_dicts = state_dict["opp_bench_pokemon"] # Get list of dicts/None from game state
+        opp_bench_pokemon_dicts = state_dict["opp_bench_pokemon"]
         for i in range(MAX_BENCH_SIZE):
-            # Get the dict for the current slot, handle if bench isn't full
             opp_poke_state_dict = opp_bench_pokemon_dicts[i] if i < len(opp_bench_pokemon_dicts) else None
-            # Format using OPP_POKEMON_OBS_SIZE (no can_attack needed)
             opp_bench_flat_list.append(self._format_pokemon_obs(opp_poke_state_dict, include_can_attack=False))
-        opp_bench_flat = np.concatenate(opp_bench_flat_list) # Concatenate the formatted bench slots
-        # --- MODIFICATION END ---
+        opp_bench_flat = np.concatenate(opp_bench_flat_list)
 
         # --- Global State ---
         turn_number = np.array([state_dict["turn"]], dtype=np.float32)
         can_attach_energy = np.array([1.0 if state_dict["can_attach_energy"] else 0.0], dtype=np.float32)
         is_first_turn = np.array([1.0 if state_dict["is_first_turn"] else 0.0], dtype=np.float32)
 
-        # --- Concatenate All Parts (MODIFIED ORDER) ---
+        # --- Concatenate All Parts ---
         flat_obs = np.concatenate([
-            my_hand_padded,
-            my_deck_size, my_discard_size, my_points,
-            my_energy_available_id, my_energy_preview_id,
-            my_active_flat,
-            my_bench_flat,
+            my_hand_padded, my_deck_size, my_discard_size, my_points,
+            my_energy_available_id, my_energy_preview_id, my_active_flat, my_bench_flat,
             opp_hand_size, opp_deck_size, opp_discard_size, opp_points,
-            opp_energy_available_exists, opp_energy_preview_id,
-            opp_active_flat,
-            # --- MODIFICATION START ---
-            # Replace opp_bench_size with opp_bench_flat
-            # opp_bench_size, # REMOVED
-            opp_bench_flat, # ADDED
-            # --- MODIFICATION END ---
-            turn_number,
-            can_attach_energy,
-            is_first_turn,
+            opp_energy_available_exists, opp_energy_preview_id, opp_active_flat, opp_bench_flat,
+            turn_number, can_attach_energy, is_first_turn,
         ])
 
-        # Final size validation check
         if flat_obs.shape[0] != FLATTENED_OBS_SIZE:
-            print(f"FATAL: Observation size mismatch! Expected {FLATTENED_OBS_SIZE}, got {flat_obs.shape[0]}. Check calculation and concatenation order.")
-            # Print details of components to help debug (Update component sizes)
-            print(f"  my_hand_padded: {my_hand_padded.shape}")          # MAX_HAND_SIZE
-            print(f"  my nums: 3")                                      # 3
-            print(f"  my energy: 2")                                    # 2
-            print(f"  my_active_flat: {my_active_flat.shape}")          # POKEMON_OBS_SIZE
-            print(f"  my_bench_flat: {my_bench_flat.shape}")            # MAX_BENCH_SIZE * POKEMON_OBS_SIZE
-            print(f"  opp nums: 4")                                      # 4
-            print(f"  opp energy: 2")                                    # 2
-            print(f"  opp_active_flat: {opp_active_flat.shape}")        # OPP_POKEMON_OBS_SIZE
-            print(f"  opp_bench_flat: {opp_bench_flat.shape}")          # MAX_BENCH_SIZE * OPP_POKEMON_OBS_SIZE
-            print(f"  global: 3")                                      # 3
-
-            total_components = (
-                my_hand_padded.shape[0] + 3 + 2 +
-                my_active_flat.shape[0] + my_bench_flat.shape[0] +
-                4 + 2 + opp_active_flat.shape[0] + opp_bench_flat.shape[0] + 3
-            )
-            print(f"  Sum of component sizes: {total_components}")
-            raise ValueError("Observation size mismatch detected.")
+             raise ValueError(f"Observation size mismatch! Expected {FLATTENED_OBS_SIZE}, got {flat_obs.shape[0]}")
 
         return flat_obs.astype(np.float32)
 
-    def action_mask_fn(self) -> np.ndarray:
-        """
-        Computes the action mask for the current game state.
-
-        Returns:
-            A boolean NumPy array of shape (NUM_POSSIBLE_ACTIONS,) where True
-            indicates a valid action and False indicates an invalid action.
-            This is used by the ActionMasker wrapper.
-        """
-        if self.game is None or self.current_player is None:
-            # Should not happen in normal flow, return a mask allowing nothing
-             print("Warning: action_mask_fn called before game reset. Allowing no actions.")
+    def action_mask_fn(self, perspective_player: Player) -> np.ndarray:
+        """Computes the action mask for the given player's perspective."""
+        if self.game is None:
              return np.zeros(NUM_POSSIBLE_ACTIONS, dtype=bool)
 
-        # Get the list of valid action strings from the game simulator
+        # Temporarily set game context for get_possible_actions (if it depends on current_player)
+        original_player_index = self.game.game_state.current_player_index
+        target_player_index = 0 if perspective_player == self.game.player1 else 1
+        self.game.game_state.current_player_index = target_player_index
+
         possible_actions_str = self.game.get_possible_actions()
-        valid_mask = np.zeros(NUM_POSSIBLE_ACTIONS, dtype=bool) # Initialize mask with all False
-    
+        valid_mask = np.zeros(NUM_POSSIBLE_ACTIONS, dtype=bool)
 
-        # Iterate through the valid action strings and map them to their integer IDs
+        # Restore original player index
+        self.game.game_state.current_player_index = original_player_index
+
+        # --- Mapping logic remains the same ---
         for action_str in possible_actions_str:
-            action_id = -1 # Default to invalid ID
+            action_id = ACTION_MAP.get(action_str) # Simplified mapping check
 
-            # --- Map action string to action ID ---
-            # Check direct mapping first (covers PASS, ATTACH_ENERGY_ACTIVE, USE_ABILITY_ACTIVE)
-            if action_str in ACTION_MAP:
-                action_id = ACTION_MAP[action_str]
-            else:
-                # Handle parameterized actions (e.g., "play_basic_bench_3", "attack_0")
+            # Handle parameterized actions if direct map failed
+            if action_id is None:
                 parts = action_str.split('_')
-                prefix = "_".join(parts[:-1]) + "_" # Reconstruct prefix like "play_basic_bench_"
-                try:
-                    index = int(parts[-1])
-                    # Reconstruct the potential key in ACTION_MAP based on prefix and index range
-                    map_key = None
-                    if prefix == ACTION_PLAY_BASIC_BENCH_PREFIX and 0 <= index < MAX_HAND_SIZE:
-                        map_key = f"{ACTION_PLAY_BASIC_BENCH_PREFIX}{index}"
-                    elif prefix == ACTION_ATTACK_PREFIX and 0 <= index < MAX_ATTACKS_PER_POKEMON:
-                        map_key = f"{ACTION_ATTACK_PREFIX}{index}"
-                    elif prefix == ACTION_ATTACH_ENERGY_BENCH_PREFIX and 0 <= index < MAX_BENCH_SIZE:
-                         map_key = f"{ACTION_ATTACH_ENERGY_BENCH_PREFIX}{index}"
-                    elif prefix == ACTION_PLAY_SUPPORTER_PREFIX and 0 <= index < MAX_HAND_SIZE:
-                         map_key = f"{ACTION_PLAY_SUPPORTER_PREFIX}{index}"
-                    elif prefix == ACTION_PLAY_ITEM_PREFIX and 0 <= index < MAX_HAND_SIZE:
-                         map_key = f"{ACTION_PLAY_ITEM_PREFIX}{index}"
-                    elif prefix == ACTION_ATTACH_TOOL_ACTIVE and 0 <= index < MAX_HAND_SIZE:
-                         map_key = f"{ACTION_ATTACH_TOOL_ACTIVE}{index}"
-                    elif prefix == ACTION_RETREAT_TO_BENCH_PREFIX and 0 <= index < MAX_BENCH_SIZE:
-                         map_key = f"{ACTION_RETREAT_TO_BENCH_PREFIX}{index}"
-                    elif prefix == ACTION_USE_ABILITY_BENCH_PREFIX and 0 <= index < MAX_BENCH_SIZE: # <-- ADD THIS BLOCK
-                        map_key = f"{ACTION_USE_ABILITY_BENCH_PREFIX}{index}"
-                    elif prefix == ACTION_PLAY_SUPPORTER_PREFIX and 0 <= index < MAX_HAND_SIZE:
-                        map_key = f"{ACTION_PLAY_SUPPORTER_PREFIX}{index}"
-                    elif prefix == ACTION_SETUP_CHOOSE_ACTIVE_FROM_HAND_PREFIX and 0 <= index < MAX_HAND_SIZE:
-                         map_key = f"{ACTION_SETUP_CHOOSE_ACTIVE_FROM_HAND_PREFIX}{index}"
-                    elif prefix == ACTION_SETUP_CHOOSE_BENCH_FROM_HAND_PREFIX and 0 <= index < MAX_HAND_SIZE:
-                         map_key = f"{ACTION_SETUP_CHOOSE_BENCH_FROM_HAND_PREFIX}{index}"
-                    # Note: ACTION_SETUP_CONFIRM_READY is handled by the direct mapping check earlier
+                if len(parts) > 1:
+                    # Check common prefixes (add more as needed)
+                    if action_str.startswith(ACTION_ATTACH_ENERGY_BENCH_PREFIX): action_id = ACTION_MAP.get(action_str)
+                    elif action_str.startswith(ACTION_PLAY_BASIC_BENCH_PREFIX): action_id = ACTION_MAP.get(action_str)
+                    elif action_str.startswith(ACTION_ATTACK_PREFIX): action_id = ACTION_MAP.get(action_str)
+                    elif action_str.startswith(ACTION_USE_ABILITY_BENCH_PREFIX): action_id = ACTION_MAP.get(action_str)
+                    elif action_str.startswith(ACTION_PLAY_SUPPORTER_PREFIX): action_id = ACTION_MAP.get(action_str)
+                    elif action_str.startswith(ACTION_PLAY_ITEM_PREFIX): action_id = ACTION_MAP.get(action_str)
+                    elif action_str.startswith(ACTION_ATTACH_TOOL_ACTIVE): action_id = ACTION_MAP.get(action_str)
+                    elif action_str.startswith(ACTION_ATTACH_TOOL_BENCH_PREFIX): action_id = ACTION_MAP.get(action_str)
+                    elif action_str.startswith(ACTION_RETREAT_TO_BENCH_PREFIX): action_id = ACTION_MAP.get(action_str)
+                    elif action_str.startswith(ACTION_SETUP_CHOOSE_ACTIVE_FROM_HAND_PREFIX): action_id = ACTION_MAP.get(action_str)
+                    elif action_str.startswith(ACTION_SETUP_CHOOSE_BENCH_FROM_HAND_PREFIX): action_id = ACTION_MAP.get(action_str)
+                    # Add checks for targetted trainer actions if needed
 
-                    # Handle compound keys like ATTACH_TOOL_BENCH_BenchIndex_HandIndex
-                    elif prefix == ACTION_ATTACH_TOOL_BENCH_PREFIX:
-                         try:
-                             # Expecting format like "ATTACH_TOOL_BENCH_0_5"
-                             bench_idx_str = parts[-2]
-                             hand_idx_str = parts[-1]
-                             bench_idx = int(bench_idx_str)
-                             hand_idx = int(hand_idx_str)
-                             if 0 <= bench_idx < MAX_BENCH_SIZE and 0 <= hand_idx < MAX_HAND_SIZE:
-                                 map_key = f"{ACTION_ATTACH_TOOL_BENCH_PREFIX}{bench_idx}_{hand_idx}"
-                         except (ValueError, IndexError):
-                              pass # Invalid format for this prefix
-
-                    if map_key and map_key in ACTION_MAP:
-                        action_id = ACTION_MAP[map_key]
-                    # else:
-                    #     # This might happen if game yields an action we haven't mapped
-                    #     # or index is out of range for the mapping (e.g., hand size changes unexpectedly)
-                    #     if self.render_mode: print(f"Warning: Could not map parameterized action '{action_str}' to ID.")
-
-                except (ValueError, IndexError):
-                    # Handle cases where the last part isn't an integer or action_str is malformed
-                    # if self.render_mode: print(f"Warning: Error parsing action string '{action_str}'.")
-                    pass # Keep action_id as -1
-
-            # --- Update the mask ---
-            # If a valid action_id was found and is within the expected range, mark it as True
-            if action_id != -1 and 0 <= action_id < NUM_POSSIBLE_ACTIONS:
+            if action_id is not None and 0 <= action_id < NUM_POSSIBLE_ACTIONS:
                 valid_mask[action_id] = True
-            # else:
-            #     # This might indicate an issue with ACTION_MAP or get_possible_actions()
-            #     if action_str: # Don't warn if action_str was empty/None
-            #         if self.render_mode: print(f"Warning: Action string '{action_str}' generated invalid ID {action_id}.")
 
-
-        # Ensure at least one action is always possible (usually PASS should be)
-        # If the mask is all False, it indicates a potential deadlock or bug.
         if not np.any(valid_mask):
-            # Try to force PASS as valid if nothing else is.
             pass_action_id = ACTION_MAP.get(ACTION_PASS)
             if pass_action_id is not None and 0 <= pass_action_id < NUM_POSSIBLE_ACTIONS:
-                 print(f"Warning: No valid actions reported by game for {self.current_player.name}. Forcing PASS action ID {pass_action_id} as valid.")
                  valid_mask[pass_action_id] = True
             else:
-                 # This is a critical error state
-                 print(f"FATAL ERROR: No valid actions found for {self.current_player.name}, and PASS action ID is invalid or missing!")
-                 # Depending on training setup, might want to raise error or just return the all-false mask
-                 # raise RuntimeError("No valid actions possible, including PASS.")
+                 print("FATAL ERROR: No valid actions possible for mask, and PASS is invalid!")
         return valid_mask
 
     def step(self, action: int):
-        """
-        Executes one time step within the environment.
-        Returns win information in the info dict upon termination.
-        """
-        if self.game is None or self.current_player is None:
-            # This should ideally not happen if reset() was called, but handle defensively
-            print("ERROR: step() called but game or current_player is None. Resetting might have failed.")
-            # Return dummy values consistent with a failed step
-            dummy_obs = np.zeros(self.observation_space.shape, dtype=self.observation_space.dtype)
-            error_info = {"error": "Step called on uninitialized game", "phase": "error", "is_success": 0.0}
-            return dummy_obs, -10.0, True, False, error_info # Terminate episode
+        if self.game is None or self.agent_player is None or self.opponent_player is None:
+             raise RuntimeError("step() called before reset().")
 
         terminated = False
-        truncated = False
-        reward = 0.0
-        info = self._get_info() # Get base info first
+        truncated = False # Not used
+        reward = 0.0      # Reward for the learning agent
 
+        # --- Execute Agent's Action ---
         action_str = ID_TO_ACTION.get(action)
-
         if action_str is None:
-            print(f"Warning: Received invalid action ID {action}. Taking no action, assigning penalty.")
-            observation = self._get_obs()
+            print(f"Warning: Agent provided invalid action ID {action}. Taking no action, assigning penalty.")
             reward = -1.0
-            info["error"] = f"Invalid action ID {action} received."
-            # Don't terminate here, let the agent try again if needed
+            terminated = False # Don't end game for invalid agent action? Or maybe should?
+            # Proceed to opponent's turn simulation if applicable
         else:
+            if self.render_mode == "human":
+                print(f"\n>>> Agent ({self.agent_player.name}) Action: {action_str} (ID: {action})")
+
             try:
-                acting_player_before_step = self.current_player # Store who acted
-
-                if self.render_mode == "human":
-                    print(f"\n>>> {acting_player_before_step.name} attempts action: {action_str} (ID: {action})")
-
-                # --- Execute Step ---
                 _next_state_dict, step_reward, terminated = self.game.step(action_str)
-                reward = float(step_reward)
-                self.current_player = self.game.game_state.get_current_player() # Update player ref
+                reward += float(step_reward) # Accumulate reward for the agent
 
-                # --- Log Win/Loss Info on Termination ---
+                # Check if game ended immediately after agent's action
                 if terminated:
-                    winner = self.game.game_state.check_win_condition() # Check winner based on game state
-                    # Determine if the player *who took the action* is the winner
-                    # This logic might need adjustment based on how check_win_condition is defined
-                    # Assuming check_win_condition returns the winning Player object or None
-                    if winner is None:
-                         # Could be a draw (e.g., turn limit) or error
-                         info["is_success"] = 0.0 # Treat draw/error as not success for this agent
-                         info["winner"] = "Draw/Error"
-                    elif winner == acting_player_before_step:
-                        info["is_success"] = 1.0 # The agent who acted won
-                        info["winner"] = acting_player_before_step.name
-                    else:
-                        info["is_success"] = 0.0 # The agent who acted lost
-                        info["winner"] = winner.name # Log the actual winner's name
-
-                # --- Get Observation for the NEW state ---
-                observation = self._get_obs()
-                # Add any other info AFTER getting the obs for the new state
-                info.update(self._get_info()) # Update with current turn info etc.
-
+                     observation = self._get_obs(self.agent_player)
+                     info = self._get_info()
+                     if self.render_mode: self.render()
+                     return observation, reward, terminated, truncated, info
 
             except Exception as e:
-                print(f"FATAL ERROR during game.step with action '{action_str}' (ID: {action})")
-                import traceback
+                print(f"FATAL ERROR during game.step with AGENT action '{action_str}'")
                 traceback.print_exc()
-                observation = np.zeros_like(self.observation_space.sample()) # Return dummy obs
-                reward = -10.0
-                terminated = True
-                info["error"] = f"Exception during game step: {e}"
-                info["is_success"] = 0.0 # Failed episode
-                # Return immediately
+                observation = self._get_obs(self.agent_player) # Get last state
+                reward = -10.0; terminated = True; info = self._get_info(); info["error"] = f"Agent step exception: {e}"
+                return observation, reward, terminated, truncated, info
 
-        # --- Rendering ---
+        # --- Simulate Opponent's Turn(s) if it's their turn ---
+        opponent_accumulated_reward = 0.0 # Track opponent reward separately
+        while not terminated and self.game.game_state.current_player_index != self.agent_player_idx:
+             terminated, reward_opp = self._simulate_opponent_turn()
+             opponent_accumulated_reward += reward_opp
+             # The loop inside _simulate_opponent_turn should break when it's agent's turn
+
+        # --- Get Final State for Agent ---
+        observation = self._get_obs(self.agent_player)
+        info = self._get_info()
+
         if self.render_mode == "human":
-            self.render()
-            print(f"<<< Action Result: Reward={reward}, Terminated={terminated}")
+            self.render() # Render final state before returning
+            print(f"<<< Step Result: Agent Reward={reward}, Terminated={terminated}")
         elif self.render_mode == "text":
-             pass # Text rendering can be added here or handled by prints within step
+            self._render_text(action_str, reward, terminated)
 
         return observation, reward, terminated, truncated, info
     
     def reset(self, seed: Optional[int] = None, options: Optional[Dict] = None):
-        print(f"[{os.getpid()}] DEBUG: Entering PokemonTCGPocketEnv.reset") # Add this
         super().reset(seed=seed)
-        print(f"[{os.getpid()}] DEBUG: Reset: Calling _setup_new_game...")
-        try: # Add try/except
-            self._setup_new_game()
+        self._setup_new_game() # Creates self.game
+
+        # --- MODIFICATION: Load opponent and determine roles ---
+        self._load_opponent_policy() # Load historical opponent
+
+        if self.game is None: # Safety check after _setup_new_game
+             raise RuntimeError("Game object not initialized after _setup_new_game.")
+
+        self.agent_player_idx = random.choice([0, 1]) # Agent is randomly P1 (idx 0) or P2 (idx 1)
+
+        # --- MODIFICATION START: Access players correctly ---
+        if self.agent_player_idx == 0:
+            self.agent_player = self.game.player1
+            self.opponent_player = self.game.player2
+        else:
+            self.agent_player = self.game.player2
+            self.opponent_player = self.game.player1
+        # --- MODIFICATION END ---
+
+        print(f"Game Reset: Agent is Player {self.agent_player_idx + 1} ({self.agent_player.name})")
+
+        # --- MODIFICATION: Handle if opponent goes first ---
+        initial_observation = None
+        try: # Add try-except around opponent simulation loop
+            while self.game.game_state.current_player_index != self.agent_player_idx:
+                if self.render_mode == "human": print("Opponent starts first...")
+                opponent_done, _ = self._simulate_opponent_turn()
+                if opponent_done:
+                    print("Warning: Game ended during opponent's first turn simulation.")
+                    initial_observation = self._get_obs(self.agent_player)
+                    break # Exit the loop, return the current observation
         except Exception as e:
-            print(f"[{os.getpid()}] ERROR IN _setup_new_game: {e}")
-            traceback.print_exc()
-            # You might want to return something default here or re-raise
-            # Returning None might be causing the TypeError directly
-            # Let's re-raise to see the original error more clearly
-            raise
-        print(f"[{os.getpid()}] DEBUG: Reset: _setup_new_game finished. Calling _get_obs...")
-        try: # Add try/except
-            observation = self._get_obs()
-        except Exception as e:
-            print(f"[{os.getpid()}] ERROR IN _get_obs: {e}")
-            traceback.print_exc()
-            raise # Re-raise
-        print(f"[{os.getpid()}] DEBUG: Reset: _get_obs finished. Calling _get_info...")
-        try: # Add try/except
-            info = self._get_info()
-        except Exception as e:
-            print(f"[{os.getpid()}] ERROR IN _get_info: {e}")
-            traceback.print_exc()
-            raise # Re-raise
-        print(f"[{os.getpid()}] DEBUG: Reset: _get_info finished. Returning observation and info.")
-        return observation, info
+             print(f"ERROR during initial opponent turn simulation: {e}")
+             traceback.print_exc()
+             # Handle error: maybe return a default observation or raise
+             initial_observation = self._get_obs(self.agent_player) # Get observation even if error occurred
+
+        # --- End Opponent First Turn Simulation ---
+
+        if initial_observation is None:
+            initial_observation = self._get_obs(self.agent_player)
+
+        info = self._get_info()
+        if self.render_mode == "human": self.render()
+        return initial_observation, info
 
     def _get_info(self) -> Dict[str, Any]:
-         """ Returns auxiliary information (called AFTER state might have changed). """
-         return {
-              "current_player_name": self.current_player.name if self.current_player else "N/A",
-              "turn_number": self.game.game_state.turn_number if self.game else 0,
-              # Removed action_mask, SB3-Contrib handles it via action_mask_fn
-         }
+        """Returns auxiliary information."""
+        # In self-play, info should reflect the learning agent's perspective
+        return {
+             "agent_player_idx": self.agent_player_idx,
+             "turn_number": self.game.game_state.turn_number if self.game else 0,
+             "opponent_policy_path": self._opponent_vec_normalize_stats # Log which opponent was loaded
+        }
+    
+    def _simulate_opponent_turn(self) -> Tuple[bool, float]:
+        """
+        Simulates the opponent's entire turn using the loaded policy.
+        Returns (terminated, accumulated_reward_for_opponent).
+        Reward is from opponent's perspective, may not be directly useful for agent.
+        """
+        if self.game is None or self.opponent_player is None: return True, 0.0 # Game ended state
+
+        terminated = False
+        accumulated_reward = 0.0
+        turn_continues = True
+
+        while turn_continues and not terminated and self.game.game_state.current_player_index != self.agent_player_idx:
+            if self._opponent_policy:
+                # Get opponent observation and mask
+                obs_opp = self._get_obs(self.opponent_player)
+                mask_opp = self.action_mask_fn(self.opponent_player)
+
+                # Normalize observation for opponent policy
+                # --- Normalization Handling ---
+                # Option A: Use stats saved with the opponent model (more accurate)
+                # Requires loading VecNormalize object based on self._opponent_vec_normalize_stats
+                # This adds complexity with managing DummyVecEnv/VecNormalize loading here.
+                # Option B: Use the *current* VecNormalize stats (simpler, less accurate if stats drift)
+                # To do Option B, we need access to the current VecNormalize wrapper applied *outside* this env.
+                # ---> Let's SKIP normalization here for simplicity first. Assume normalized env or handle outside.
+                # normalized_obs_opp = ???
+
+                # Predict action using opponent policy
+                try:
+                    # IMPORTANT: Use MaskablePPO prediction if that's what was saved
+                    action_id_opp, _ = self._opponent_policy.predict(
+                        obs_opp.reshape(1, -1), # Reshape for batch dim
+                        action_masks=mask_opp.reshape(1, -1),
+                        deterministic=True # Or False for stochastic opponent
+                    )
+                    action_id_opp = int(action_id_opp.item()) # Extract scalar
+                except Exception as e:
+                     print(f"ERROR during opponent policy prediction: {e}")
+                     traceback.print_exc()
+                     action_id_opp = ACTION_MAP.get(ACTION_PASS) # Fallback to PASS on error
+                     if action_id_opp is None: return True, accumulated_reward # Cannot even pass
+
+            else:
+                # No policy loaded - opponent plays randomly among valid actions
+                mask_opp = self.action_mask_fn(self.opponent_player)
+                valid_ids = np.where(mask_opp)[0]
+                action_id_opp = random.choice(valid_ids) if len(valid_ids) > 0 else ACTION_MAP.get(ACTION_PASS)
+                if action_id_opp is None: return True, accumulated_reward # Cannot even pass
+
+            # Convert ID to string and execute in game
+            action_str_opp = ID_TO_ACTION.get(action_id_opp)
+            if action_str_opp is None:
+                print(f"ERROR: Opponent chose invalid action ID {action_id_opp}. Forcing PASS.")
+                action_str_opp = ACTION_PASS
+
+            if self.render_mode == "human": print(f"--- Opponent ({self.opponent_player.name}) Action: {action_str_opp} (ID: {action_id_opp})")
+
+            _next_state_dict, reward_opp, terminated = self.game.step(action_str_opp)
+            accumulated_reward += reward_opp
+
+            # Check if the opponent's action ended their turn (game state switched player)
+            if self.game.game_state.current_player_index == self.agent_player_idx:
+                turn_continues = False
+
+            # Break loop if game ended
+            if terminated:
+                turn_continues = False
+
+        return terminated, accumulated_reward
 
 
     def render(self):
@@ -777,60 +817,73 @@ class PokemonTCGPocketEnv(gym.Env):
 
     def _render_human(self):
         """Provides a detailed text-based rendering for human observation."""
-        if self.game is None or self.current_player is None:
-             print("Cannot render: Game not initialized.")
+        if self.game is None:
+            print("Cannot render: Game not initialized.")
+            return
+        # Ensure agent/opponent roles are set (should be after reset)
+        if self.agent_player_idx is None or self.agent_player is None or self.opponent_player is None:
+             print("Cannot render: Agent/Opponent roles not set (Env not reset properly?).")
              return
 
         print("\n" + "="*40)
         gs = self.game.game_state
         p1 = self.game.player1
         p2 = self.game.player2
-        current_player_render = gs.get_current_player() # Use game's current player
+        current_player_render = gs.get_current_player() # Player whose turn it is in the game
 
-        print(f"Turn: {gs.turn_number} | Current Player: {current_player_render.name}")
-        print(f"First Turn? {'Yes' if gs.is_first_turn else 'No'}")
+        # Determine labels based on who the learning agent is
+        agent_label = f"Player {self.agent_player_idx + 1} ({self.agent_player.name}) (Agent)"
+        opp_label = f"Player {1 - self.agent_player_idx + 1} ({self.opponent_player.name}) (Opponent)"
+        p1_label = agent_label if self.agent_player_idx == 0 else opp_label
+        p2_label = agent_label if self.agent_player_idx == 1 else opp_label
+
+        print(f"Turn: {gs.turn_number} | Current Turn Player: {current_player_render.name} ({'Agent' if current_player_render == self.agent_player else 'Opponent'})")
+        print(f"First Turn Overall? {'Yes' if gs.is_first_turn else 'No'}")
+        print(f"Opponent Policy Loaded: {'Yes' if self._opponent_policy else 'No'} ({os.path.basename(self._opponent_vec_normalize_stats) if self._opponent_vec_normalize_stats else 'N/A'})")
         print("-" * 20)
 
         # --- Player 1 Info ---
-        print(f"Player 1: {p1.name}")
+        print(p1_label) # Use the dynamic label
         print(f"  Points: {p1.points}/{POINTS_TO_WIN}")
         print(f"  Hand: {len(p1.hand)} | Deck: {len(p1.deck)} | Discard: {len(p1.discard_pile)}")
         print(f"  Energy Stand: Avail='{p1.energy_stand_available or 'None'}', Preview='{p1.energy_stand_preview or 'None'}'")
-        print(f"  Active: {p1.active_pokemon}") # Uses Pokemon.__repr__
-        bench_str = ", ".join(repr(p) for p in p1.bench) if p1.bench else "Empty"
-        print(f"  Bench ({len(p1.bench)}/{MAX_BENCH_SIZE}): [{bench_str}]")
-        # Optionally print hand cards for debugging (can be long)
-        # print(f"  Hand Cards: {p1.hand}")
+        print(f"  Active: {p1.active_pokemon!r}") # Use repr for Pokemon details
+        bench_str_p1 = ", ".join(repr(p) for p in p1.bench) if p1.bench else "Empty"
+        print(f"  Bench ({len(p1.bench)}/{MAX_BENCH_SIZE}): [{bench_str_p1}]")
         print("-" * 20)
 
         # --- Player 2 Info ---
-        print(f"Player 2: {p2.name}")
+        print(p2_label) # Use the dynamic label
         print(f"  Points: {p2.points}/{POINTS_TO_WIN}")
         print(f"  Hand: {len(p2.hand)} | Deck: {len(p2.deck)} | Discard: {len(p2.discard_pile)}")
         print(f"  Energy Stand: Avail='{p2.energy_stand_available or 'None'}', Preview='{p2.energy_stand_preview or 'None'}'")
-        print(f"  Active: {p2.active_pokemon}") # Uses Pokemon.__repr__
-        bench_str = ", ".join(repr(p) for p in p2.bench) if p2.bench else "Empty"
-        print(f"  Bench ({len(p2.bench)}/{MAX_BENCH_SIZE}): [{bench_str}]")
-        # print(f"  Hand Cards: {p2.hand}") # Optionally print hand
+        print(f"  Active: {p2.active_pokemon!r}") # Use repr for Pokemon details
+        bench_str_p2 = ", ".join(repr(p) for p in p2.bench) if p2.bench else "Empty"
+        print(f"  Bench ({len(p2.bench)}/{MAX_BENCH_SIZE}): [{bench_str_p2}]")
         print("-" * 20)
 
         # --- Possible Actions & Mask Info ---
-        print(f"Possible Actions for {current_player_render.name}:")
-        possible_actions = self.game.get_possible_actions() # Get fresh list
-        for pa in possible_actions:
-            print(f"  - {pa}")
-
-        # Display action mask for debugging
+        # Show possible actions for the player whose turn it currently is in the game
+        print(f"Possible Actions for Current Player ({current_player_render.name}):")
         try:
-            mask = self.action_mask_fn()
+            # We need the actions available to the player whose turn it IS in the game state
+            possible_actions = self.game.get_possible_actions() # This uses game.game_state.current_player_index
+            for pa in possible_actions:
+                print(f"  - {pa}")
+        except Exception as e:
+            print(f"\nError getting possible actions for rendering: {e}")
+
+        # Display action mask, which is always relevant from the LEARNING AGENT's perspective
+        print(f"\nAction Mask Info (Perspective: {self.agent_player.name} (Agent)):")
+        try:
+            # Get the mask from the agent's point of view
+            mask = self.action_mask_fn(self.agent_player)
             valid_action_ids = np.where(mask)[0]
             valid_action_names = [ID_TO_ACTION.get(idx, f'INVALID_ID_{idx}') for idx in valid_action_ids]
-            print("\nAction Mask Info (for Agent):")
-            print(f"  Valid Action IDs: {valid_action_ids.tolist()}") # Convert to list for cleaner print
-            print(f"  Valid Action Names: {valid_action_names}")
+            print(f"  Valid Action IDs (Agent): {valid_action_ids.tolist()}")
+            print(f"  Valid Action Names (Agent): {valid_action_names}")
         except Exception as e:
              print(f"\nError generating action mask for rendering: {e}")
-
 
         print("="*40 + "\n")
 
@@ -846,7 +899,6 @@ class PokemonTCGPocketEnv(gym.Env):
         if self.render_mode == "human":
             print("Closing Pokemon TCG Pocket Environment.")
         self.game = None
-        self.current_player = None
 
 
 # --- Example Usage Block ---
