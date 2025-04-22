@@ -3,56 +3,50 @@ import json
 import os
 import copy
 from typing import List, Optional, Dict, Tuple, Any
-from simulator.entities import Player, GameState, PokemonCard, TrainerCard, Card, Attack, POINTS_TO_WIN # Added TrainerCard import
+from simulator.entities import Player, GameState, PokemonCard, TrainerCard, Card, Attack, POINTS_TO_WIN
 
-# --- Constants ---
-CARD_DATA_FILE = os.path.join(os.path.dirname(__file__), '..', 'cards.json') # Path to cards.json relative to this file
-MAX_HAND_SIZE = 10 # Maximum number of cards a player can hold in hand
+CARD_DATA_FILE = os.path.join(os.path.dirname(__file__), '..', 'cards.json')
+MAX_HAND_SIZE = 10
 MAX_BENCH_SIZE = 3
 
-# define the string constants for different actions
 ACTION_PASS = "PASS"
 ACTION_ATTACK_PREFIX = "ATTACK_"
 ACTION_ATTACH_ENERGY_ACTIVE = "ATTACH_ENERGY_ACTIVE"
 ACTION_ATTACH_ENERGY_BENCH_PREFIX = "ATTACH_ENERGY_BENCH_"
 ACTION_PLAY_BASIC_BENCH_PREFIX = "PLAY_BASIC_BENCH_"
 ACTION_USE_ABILITY_ACTIVE = "USE_ABILITY_ACTIVE"
-ACTION_USE_ABILITY_BENCH_PREFIX = "USE_ABILITY_BENCH_" # Added definition
-ACTION_PLAY_SUPPORTER_PREFIX = "PLAY_SUPPORTER_" # Generic supporter action
-ACTION_PLAY_ITEM_PREFIX = "PLAY_ITEM_"         # Generic item action
-ACTION_ATTACH_TOOL_ACTIVE = "ATTACH_TOOL_ACTIVE_" # Hand Index Suffix
-ACTION_ATTACH_TOOL_BENCH_PREFIX = "ATTACH_TOOL_BENCH_" # BenchIndex_HandIndex Suffix
-ACTION_RETREAT_TO_BENCH_PREFIX = "RETREAT_TO_BENCH_" # Retreat action
+ACTION_USE_ABILITY_BENCH_PREFIX = "USE_ABILITY_BENCH_"
+ACTION_PLAY_SUPPORTER_PREFIX = "PLAY_SUPPORTER_"
+ACTION_PLAY_ITEM_PREFIX = "PLAY_ITEM_"
+ACTION_ATTACH_TOOL_ACTIVE = "ATTACH_TOOL_ACTIVE_" 
+ACTION_ATTACH_TOOL_BENCH_PREFIX = "ATTACH_TOOL_BENCH_" 
+ACTION_RETREAT_TO_BENCH_PREFIX = "RETREAT_TO_BENCH_" 
 ACTION_USE_ABILITY_BENCH_PREFIX = "USE_ABILITY_BENCH_"
 
-# --- Target-Specific Trainer Actions ---
-ACTION_PLAY_SUPPORTER_CYRUS_TARGET_PREFIX = "PLAY_SUPPORTER_CYRUS_TARGET_" # hand_index_bench_index
-ACTION_PLAY_ITEM_POTION_TARGET_PREFIX = "PLAY_ITEM_POTION_TARGET_" # hand_index_target_id (active | bench_idx)
-ACTION_PLAY_SUPPORTER_PCL_TARGET_PREFIX = "PLAY_SUPPORTER_PCL_TARGET_" # hand_index_target_id (active | bench_idx)
-ACTION_PLAY_SUPPORTER_DAWN_SOURCE_TARGET_PREFIX = "PLAY_SUPPORTER_DAWN_SOURCE_TARGET_" # hand_index_source_bench_index
+# taget specific supporters
+ACTION_PLAY_SUPPORTER_CYRUS_TARGET_PREFIX = "PLAY_SUPPORTER_CYRUS_TARGET_" 
+ACTION_PLAY_ITEM_POTION_TARGET_PREFIX = "PLAY_ITEM_POTION_TARGET_" 
+ACTION_PLAY_SUPPORTER_PCL_TARGET_PREFIX = "PLAY_SUPPORTER_PCL_TARGET_"
+ACTION_PLAY_SUPPORTER_DAWN_SOURCE_TARGET_PREFIX = "PLAY_SUPPORTER_DAWN_SOURCE_TARGET_"
 
-# Setup Phase Actions (Simultaneous/Hidden)
 ACTION_SETUP_CHOOSE_ACTIVE_FROM_HAND_PREFIX = "setup_choose_active_"
 ACTION_SETUP_CHOOSE_BENCH_FROM_HAND_PREFIX = "setup_choose_bench_"
 ACTION_SETUP_CONFIRM_READY = "setup_confirm_ready"
 
 ACTION_OPP_PLAY_SUPPORTER_PREFIX = "OPP_PLAY_SUPPORTER_"
 ACTION_OPP_PLAY_ITEM_PREFIX = "OPP_PLAY_ITEM_"
-ACTION_OPP_PLAY_BASIC_PREFIX = "OPP_PLAY_BASIC_" # Target is always bench
+ACTION_OPP_PLAY_BASIC_PREFIX = "OPP_PLAY_BASIC_"
 ACTION_OPP_ATTACH_TOOL_PREFIX = "OPP_ATTACH_TOOL_"
 
 class Game:
     def __init__(self, player1_deck_names: List[str], player2_deck_names: List[str], player1_energy_types: List[str], player2_energy_types: List[str]):
-        self.card_data = self._load_card_data() # Load card definitions first
+        self.card_data = self._load_card_data()
         if not self.card_data:
             raise ValueError("Failed to load card data. Cannot initialize game.")
 
         # make sure the input deck lists have the correct size
         if len(player1_deck_names) != 20 or len(player2_deck_names) != 20:
-             # Note: This check assumes the input list *is* the deck.
-             # If it's just a pool to draw from, this check needs adjustment.
             print(f"Input deck name lists should have 20 cards. P1: {len(player1_deck_names)}, P2: {len(player2_deck_names)}")
-            # Consider raising an error or adjusting logic if size mismatch is critical
 
         self.player1 = Player("Player 1")
         self.player2 = Player("Player 2")
@@ -60,13 +54,13 @@ class Game:
         self.player1.deck_energy_types = player1_energy_types if player1_energy_types else ["Colorless"]
         self.player2.deck_energy_types = player2_energy_types if player2_energy_types else ["Colorless"]
 
-        # Build decks from names using loaded data
+        # build the decks from the name
         deck1_cards = self._build_deck(player1_deck_names)
         deck2_cards = self._build_deck(player2_deck_names)
 
         # setup game for each player using the built decks
-        self.player1.setup_game(deck1_cards) # Pass the instantiated cards
-        self.player2.setup_game(deck2_cards) # Pass the instantiated cards
+        self.player1.setup_game(deck1_cards)
+        self.player2.setup_game(deck2_cards)
 
         # setup the game state for the players
         self.game_state = GameState(self.player1, self.player2)
@@ -78,15 +72,12 @@ class Game:
         print(f"Player 2 Energy Types: {self.player2.deck_energy_types}")
         print(f"Starting Player: {self.game_state.get_current_player().name}")
         self._initialize_energy_stand() # sets up energy according to what the player picked
-        # Don't call _start_turn() here, setup phase handles the first turn start implicitly
-        # self._start_turn()
 
     def _load_card_data(self) -> Dict[str, Dict]:
         """Loads card definitions from the JSON file."""
         try:
             with open(CARD_DATA_FILE, 'r') as f:
                 all_cards_data = json.load(f)
-            # Convert list of cards into a dict keyed by name for easy lookup
             card_dict = {card['name']: card for card in all_cards_data}
             print(f"Successfully loaded data for {len(card_dict)} cards from {CARD_DATA_FILE}")
             return card_dict
@@ -101,7 +92,7 @@ class Game:
             return {}
 
     def _build_deck(self, deck_names: List[str]) -> List[Card]:
-        """Builds a list of Card objects from a list of card names using loaded data."""
+        """Builds a deck from a list of cards in the card data"""
         deck_cards: List[Card] = []
         for name in deck_names:
             card_info = self.card_data.get(name)
@@ -109,10 +100,9 @@ class Game:
                 print(f"Warning: Card name '{name}' not found in loaded card data. Skipping.")
                 continue
 
-            # Use deepcopy to ensure each card in the deck is a unique instance
+            # make sure each card in the deck is a unique instance
             card_info_copy = copy.deepcopy(card_info)
-
-            # --- Instantiate Attacks ---
+            # instantiate attacks
             attacks = []
             if card_info_copy.get("attacks"):
                 for attack_data in card_info_copy["attacks"]:
@@ -120,69 +110,59 @@ class Game:
                         name=attack_data.get("name", "Unknown Attack"),
                         cost=attack_data.get("cost", {}),
                         damage=attack_data.get("damage", 0),
-                        effect=attack_data.get("effect_tag") # Pass effect tag if present
+                        effect=attack_data.get("effect_tag")
                     ))
 
-            # --- Instantiate Card based on type ---
+            # instantiate cards based on card type
             card_type = card_info_copy.get("card_type")
-
+            
+            # if it's a pokemon, get name, hp, attacks, type, weakness, retreat cost, if it's an ex and basic, and if it has an ability.
             if card_type == "Pokemon":
                 pokemon = PokemonCard(
                     name=card_info_copy.get("name", "Unknown Pokemon"),
-                    hp=card_info_copy.get("hp", 0), # Use .get with default
+                    hp=card_info_copy.get("hp", 0),
                     attacks=attacks,
                     pokemon_type=card_info_copy.get("pokemon_type", "Colorless"),
                     weakness_type=card_info_copy.get("weakness_type"),
-                    retreat_cost=card_info_copy.get("retreat_cost", 0), # Read retreat cost
+                    retreat_cost=card_info_copy.get("retreat_cost", 0),
                     is_ex=card_info_copy.get("is_ex", False),
-                    is_basic=card_info_copy.get("is_basic", True), # Assume basic if not specified? Check parser
-                    ability=card_info_copy.get("ability") # Pass ability dict if present
+                    is_basic=card_info_copy.get("is_basic", True),
+                    ability=card_info_copy.get("ability")
                 )
                 deck_cards.append(pokemon)
-            elif card_type in ["Supporter", "Item", "Tool", "Stadium"]: # Handle Trainer types
+            # handle all other cards (supporter, item, or tool)
+            elif card_type in ["Supporter", "Item", "Tool"]:
                 trainer = TrainerCard(
                     name=card_info_copy.get("name", "Unknown Trainer"),
                     trainer_type=card_type,
                     effect_tag=card_info_copy.get("effect_tag")
                 )
                 deck_cards.append(trainer)
-            elif card_type == "Energy":
-                # TODO: Implement EnergyCard class and instantiation if needed
-                print(f"Warning: Energy card '{name}' found, but EnergyCard class not implemented. Skipping.")
-                pass
-            else:
-                # Fallback for unknown or missing card types
-                print(f"Warning: Card '{name}' has unknown or missing card_type '{card_type}'. Skipping.")
-                pass
 
         return deck_cards
 
 
     def _initialize_energy_stand(self):
         """Sets the initial state of the energy stand for both players."""
+        # the player actually going first will have their available stay none after _start_turn
+        # the player going second will get their preview promoted in their first _start_turn
         self.player1.energy_stand_preview = random.choice(self.player1.deck_energy_types) if self.player1.deck_energy_types else None
         self.player1.energy_stand_available = None
 
         self.player2.energy_stand_preview = random.choice(self.player2.deck_energy_types) if self.player2.deck_energy_types else None
         self.player2.energy_stand_available = None
-        # the player actually going first will have their available stay none after _start_turn
-        # the player going second will get their preview promoted in their first _start_turn
+
 
     def _start_turn(self):
-        """Handles start-of-turn procedures including energy stand update and drawing a card, and triggers passive abilities."""
+        """Handles start-of-turn procedures including energy stand update and drawing a card."""
         player = self.game_state.get_current_player()
-        # --- MODIFICATION: Print player name here for context ---
-        print(f"\n--- Turn {self.game_state.turn_number}: Starting {player.name}'s Turn ---")
-        # --- END MODIFICATION ---
-
-        # Reset turn actions completely, clearing previous ability usage flags
+        # reset turn actions as it is the beginning of a turn
         self.actions_this_turn = {
             "energy_attached": False,
             "supporter_played": False,
             "retreat_used": False,
-            "red_effect_active": False, # Reset Red's effect flag (temporary effect)
-            "leaf_effect_active": False # Reset Leaf's effect flag (temporary effect)
-            # Ability usage flags (like 'ability_used_Broken-Space Bellow') are implicitly cleared
+            "red_effect_active": False,
+            "leaf_effect_active": False
         }
 
         # promote preview to available (if available is empty/used)
@@ -197,13 +177,10 @@ class Game:
             player.energy_stand_preview = None
 
         print(f"{player.name} Energy Stand - Available: {player.energy_stand_available or 'None'}, Preview: {player.energy_stand_preview or 'None'}")
-
-        # --- MODIFICATION: Check skip_automatic_draw flag ---
-        # Draw card at the start of the turn (unless skip_automatic_draw is True)
+        # automatic draw is used for play_via_relay where the opponent's hand is unknown
         if not player.skip_automatic_draw:
             player.draw_cards(1)
         else:
-            # Add a print statement for clarity during relay play
             print(f"Skipping automatic draw for {player.name} (Manual draw expected in relay script).")
 
 
@@ -212,16 +189,13 @@ class Game:
         Gather all relevant information about the current game state from the perspective of the
         given player, so that the AI can play/learn.
         """
-        opponent = self.game_state.get_opponent() # Correctly get opponent regardless of whose turn
+        opponent = self.game_state.get_opponent()
 
         my_active_details = self._get_pokemon_details(player.active_pokemon)
-        my_bench_details = [self._get_pokemon_details(p) for p in player.bench] # List of dicts/None
+        my_bench_details = [self._get_pokemon_details(p) for p in player.bench]
 
         opp_active_details = self._get_pokemon_details(opponent.active_pokemon)
-        # --- MODIFICATION START ---
-        # Include details for opponent's bench Pokemon
-        opp_bench_details = [self._get_pokemon_details(p) for p in opponent.bench] # List of dicts/None
-        # --- MODIFICATION END ---
+        opp_bench_details = [self._get_pokemon_details(p) for p in opponent.bench]
 
 
         state_dict = {
@@ -234,8 +208,8 @@ class Game:
             "my_points": player.points,
             "my_energy_stand_available": player.energy_stand_available,
             "my_energy_stand_preview": player.energy_stand_preview,
-            "my_active_pokemon": my_active_details, # Includes attached tool now
-            "my_bench_pokemon": my_bench_details, # Includes attached tool now (list of dicts/None)
+            "my_active_pokemon": my_active_details,
+            "my_bench_pokemon": my_bench_details,
 
             # opponent info
             "opp_hand_size": len(opponent.hand),
@@ -247,12 +221,8 @@ class Game:
                 "available_exists": opponent.energy_stand_available is not None,
                 "preview": opponent.energy_stand_preview
             },
-            "opp_active_pokemon": opp_active_details, # Includes attached tool
-            # --- MODIFICATION START ---
-            # Replace opp_bench_size with opp_bench_pokemon details
-            # "opp_bench_size": len(opponent.bench), # REMOVED
-            "opp_bench_pokemon": opp_bench_details, # ADDED (list of dicts/None)
-            # --- MODIFICATION END ---
+            "opp_active_pokemon": opp_active_details,
+            "opp_bench_pokemon": opp_bench_details,
 
             # info about the game
             "turn": self.game_state.turn_number,
@@ -267,19 +237,16 @@ class Game:
         Extract relevant details from a PokemonCard object for state representation.
         Returns None if pokemon is None or fainted.
         """
-        # --- MODIFICATION: Treat fainted as None for state ---
         if pokemon is None or pokemon.is_fainted:
             return None
 
         details = {
             "name": pokemon.name,
-            "hp": pokemon.hp, # Max HP
-            "current_hp": pokemon.current_hp, # Current HP
-            "attached_energy": pokemon.attached_energy.copy(), # Return a copy
-            # "is_fainted": pokemon.is_fainted, # Removed, handled by returning None above
+            "hp": pokemon.hp,
+            "current_hp": pokemon.current_hp,
+            "attached_energy": pokemon.attached_energy.copy(),
             "attack_names": [attack.name for attack in pokemon.attacks],
             "attached_tool_name": pokemon.attached_tool.name if pokemon.attached_tool else None,
-            # Add other details needed for state representation if necessary
             "pokemon_type": pokemon.pokemon_type,
             "weakness_type": pokemon.weakness_type,
             "is_ex": pokemon.is_ex
@@ -295,16 +262,14 @@ class Game:
         actions = []
         player_idx = self.game_state.current_player_index
         opponent_idx = 1 - player_idx
-        opponent = self.game_state.get_opponent() # Redundant assignment, opponent already defined
 
-
-        # --- Simultaneous Setup Phase Logic ---
-        # Check if the game is still in the setup phase (i.e., before turn 1 starts properly)
+        # setup phase where both players place down a pokemon onto the board (must place a pokemon in the active slot) and cannot see each others pokemon
+        # until they both select ready
         is_setup_phase_check = not player.setup_ready or not opponent.setup_ready
-        if is_setup_phase_check: # Use the calculated flag
-            # If the current player hasn't confirmed their setup yet:
+        if is_setup_phase_check:
+            # check if player has set up
             if not player.setup_ready:
-                # 1. Must choose an Active Pokemon if not already chosen
+                # check for pokemon in active slot
                 if player.pending_setup_active is None:
                     found_basic = False
                     for i, card in enumerate(player.hand):
@@ -313,13 +278,12 @@ class Game:
                             actions.append(action_name)
                             found_basic = True
                     if not found_basic:
-                        # This should not happen due to Player.setup_game guarantee
                         print(f"CRITICAL ERROR: Player {player.name} has no basic Pokemon in hand during setup choice!")
-                        return [] # Error state
-                    return actions # Only allow choosing active at this point
+                        return []
+                    return actions
 
-                # 2. Can choose Bench Pokemon (optional) if Active is chosen and bench isn't full
-                # Need to track which hand indices are already assigned to pending active/bench
+                # 2. can choose bench pokemon (optional) if active is chosen and bench isn't full
+                # need to track which hand indices are already assigned to pending active/bench
                 assigned_hand_indices = set()
                 if player.pending_setup_active:
                     # Find the hand index corresponding to the pending active card
