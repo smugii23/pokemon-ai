@@ -25,10 +25,10 @@ from stable_baselines3.common.env_util import make_vec_env
 from rl_env import PokemonTCGPocketEnv, ACTION_MAP, ACTION_PASS # Assuming rl_env.py is accessible
 
 # --- Configuration ---
-TOTAL_TIMESTEPS = 50000000   # Adjust as needed for full training
+TOTAL_TIMESTEPS = 100000000   # Adjust as needed for full training
 NUM_ENVIRONMENTS = 8     # Increase for parallel training (e.g., 4, 8, 16)
 LOG_INTERVAL = 10
-MODEL_SAVE_FREQ = 1000000   # How often to save the *main* agent checkpoint
+MODEL_SAVE_FREQ = 3000000   # How often to save the *main* agent checkpoint
 LOG_PATH = "logs/pokemon_ppo_selfplay_v2" # New log dir recommended
 MODEL_SAVE_PATH = "models/pokemon_ppo_selfplay_v2/agent" # Base path for agent saves
 CHECKPOINT_DIR = "models/ppo_checkpoints_v2" # Directory for historical opponents
@@ -189,13 +189,11 @@ def train_agent():
         # Correction: The VecEnv worker calls the function it receives with no args.
         # So the lambda/partial needs to call make_env with rank and seed.
         rank_seed = base_seed + i
-        # Use lambda to capture current i and rank_seed
         env_lambda = lambda rank=i, seed=rank_seed: make_env(rank=rank, seed=seed, env_kwargs=env_kwargs_dict)()
         env_fns.append(env_lambda)
 
 
     try:
-        # Directly instantiate the VecEnv class with the list of lambdas
         if vec_env_cls == SubprocVecEnv:
             base_vec_env = SubprocVecEnv(env_fns, start_method=start_method)
         else:
@@ -205,13 +203,6 @@ def train_agent():
         traceback.print_exc()
         return
 
-
-    # --- Apply VecNormalize Wrapper ---
-    # Wraps the VecEnv which contains Monitor/ActionMasker-wrapped Envs
-    # The commented-out ActionMasker line below is CORRECTLY commented out.
-    # masked_vec_env = ActionMasker(base_vec_env, get_action_masks) # This line should NOT be here
-
-    # --- Load or Initialize Agent ---
     model_file_path = MODEL_SAVE_PATH + ".zip"
     env_for_agent = base_vec_env # Start with the base VecEnv
 
@@ -291,7 +282,6 @@ def train_agent():
 # --- Main Execution Block ---
 if __name__ == "__main__":
     # Set start method for multiprocessing (required on some platforms)
-    # Use 'fork' on Linux/macOS if possible, 'spawn' otherwise (Windows)
     mp_start_method = 'fork' if hasattr(os, 'fork') else 'spawn'
     multiprocessing.set_start_method(mp_start_method, force=True)
 

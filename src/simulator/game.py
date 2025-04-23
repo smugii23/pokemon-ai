@@ -575,7 +575,7 @@ class Game:
         """
         player = self.game_state.get_current_player()
         opponent = self.game_state.get_opponent()
-        reward = 0.0 # this is the default reward for taking a step
+        reward = -0.01 # this is the default reward for taking a step
         done = False
         info = {} # just for debugging or extra info
         # ACTION_USE_ABILITY_BENCH_PREFIX = "USE_ABILITY_BENCH_" # Defined globally now
@@ -723,7 +723,6 @@ class Game:
                     if energy_to_attach and can_attach_energy_this_turn and player.active_pokemon:
                           # Check energy count BEFORE attaching
                           current_energy_count = sum(player.active_pokemon.attached_energy.values())
-                          reward += 0.03
                           player.active_pokemon.attach_energy(energy_to_attach)
                           player.energy_stand_available = None # actually consume the energy form the energy stand
                           self.actions_this_turn["energy_attached"] = True
@@ -742,15 +741,15 @@ class Game:
                                      points_scored = 2 if opponent.active_pokemon.is_ex else 1
                                      print(f"  {opponent.active_pokemon.name} fainted from Nightmare Aura. {player.name} scores {points_scored} point(s).")
                                      player.add_point(points_scored)
-                                     reward += 0.75 * points_scored
+                                     reward += 1.5 * points_scored
                                      winner = self.game_state.check_win_condition()
                                      if winner:
                                          print(f"Game Over. Winner: {winner.name}")
-                                         reward += 2.0 # Big reward for winning
+                                         reward += 5.0 # Big reward for winning
                                          done = True
                                      elif not opponent.promote_bench_pokemon():
                                           print(f"Game Over. {opponent.name} has no Pokemon to promote. Winner: {player.name}")
-                                          reward += 2.0 # Reward for winning
+                                          reward += 5.0 # Reward for winning
                                           done = True
 
                     else: # This else corresponds to the 'if energy_to_attach and can_attach_energy_this_turn and player.active_pokemon:'
@@ -816,11 +815,6 @@ class Game:
                                 )
                                 # Add ghost card to discard AFTER effect attempt
                                 player.discard_pile.append(ghost_card)
-                                if effect_executed_successfully:
-                                    reward += 0.05
-                                else:
-                                    print(f"Effect of Opponent's {ghost_card.name} failed or had no target.")
-                                    # Don't penalize reward if action was valid but effect fizzled
                         elif ghost_card is None:
                             print(f"Error: Could not instantiate opponent supporter '{card_name}'.")
                             reward -= 0.5
@@ -872,10 +866,6 @@ class Game:
                              )
                              # Add ghost card to discard AFTER effect attempt
                              player.discard_pile.append(ghost_card)
-                             if effect_executed_successfully:
-                                 reward += 0.05
-                             else:
-                                 print(f"Effect of Opponent's {ghost_card.name} failed or had no target.")
                      elif ghost_card is None:
                          print(f"Error: Could not instantiate opponent item '{card_name}'.")
                          reward -= 0.5
@@ -960,7 +950,6 @@ class Game:
                                  target_pokemon.current_hp += 20
                                  print(f"  Opponent's {target_pokemon.name} HP increased by 20 due to Giant Cape.")
                              action_executed = True
-                             reward += 0.05
                          elif target_pokemon is None:
                               print(f"Error: Could not find target {target_type} {target_index_str or ''} for opponent tool.")
                               reward -= 0.5
@@ -1075,7 +1064,7 @@ class Game:
                                         opponent.active_pokemon,
                                         damage_modifier=damage_modifier
                                     )
-                                    reward += damage_dealt * 0.03 # Reward based on damage dealt
+                                    reward += damage_dealt * 0.05 # Reward based on damage dealt
 
                                     # --- Apply Recoil Damage (e.g., Chaotic Impact) ---
                                     if player.active_pokemon.name == "Giratina ex" and attack.name == "Chaotic Impact":
@@ -1087,11 +1076,11 @@ class Game:
                                             points_scored_by_opponent = 2 if player.active_pokemon.is_ex else 1
                                             print(f"  {player.active_pokemon.name} fainted from recoil! {opponent.name} scores {points_scored_by_opponent} point(s).")
                                             opponent.add_point(points_scored_by_opponent)
-                                            reward -= 0.75 * points_scored_by_opponent # Negative reward for self-KO
+                                            reward -= 1.5 * points_scored_by_opponent # Negative reward for self-KO
                                             winner = self.game_state.check_win_condition()
                                             if winner:
                                                 print(f"Game Over due to recoil KO. Winner: {winner.name}")
-                                                reward -= 2.0 # Big penalty for losing via recoil
+                                                reward -= 5.0 # Big penalty for losing via recoil
                                                 done = True
                                                 # Return early if game ends due to recoil KO
                                                 # Need to get state before returning
@@ -1102,7 +1091,7 @@ class Game:
                                                 # Let's set done and let the end-of-step logic handle return.
                                             elif not player.promote_bench_pokemon():
                                                 print(f"Game Over. {player.name} fainted from recoil and has no Pokemon to promote. Winner: {opponent.name}")
-                                                reward -= 2.0 # Penalty for losing
+                                                reward -= 5.0 # Penalty for losing
                                                 done = True
                                             # If player promoted successfully, the turn ends normally after opponent KO check
 
@@ -1112,19 +1101,19 @@ class Game:
                                         points_scored = 2 if opponent.active_pokemon.is_ex else 1
                                         print(f"  {opponent.active_pokemon.name} fainted! {player.name} scores {points_scored} point(s).")
                                         player.add_point(points_scored)
-                                        reward += 0.75 * points_scored
+                                        reward += 1.5 * points_scored
                                         # Check win condition immediately after scoring points
                                         winner = self.game_state.check_win_condition()
                                         if winner:
                                             print(f"Game Over. Winner: {winner.name}")
-                                            reward += 2.0 # Big reward for winning
+                                            reward += 5.0 # Big reward for winning
                                             done = True
                                             # No need to promote if game is over
                                         else:
                                             # Opponent needs to promote a new active Pokemon
                                             if not opponent.promote_bench_pokemon():
                                                 print(f"Game Over. {opponent.name} has no Pokemon to promote. Winner: {player.name}")
-                                                reward += 2.0 # Reward for winning
+                                                reward += 5.0 # Reward for winning
                                                 done = True
 
                                     action_executed = True # Attack execution ends the turn implicitly later
@@ -1158,8 +1147,6 @@ class Game:
                             effect_executed_successfully = self._execute_trainer_effect(card_to_play.effect_tag, player, opponent, target_id=target_id)
                             played_card = player.hand.pop(hand_index)
                             player.discard_pile.append(played_card)
-                            if effect_executed_successfully: reward += 0.05
-                            else: print(f"Effect of {card_to_play.name} failed or had no valid target.")
                         else:
                             print(f"Error: Card at index {hand_index} is not Potion or not an Item.")
                             reward -= 0.5
@@ -1188,11 +1175,6 @@ class Game:
                             played_card = player.hand.pop(hand_index)
                             player.discard_pile.append(played_card)
 
-                            if effect_executed_successfully:
-                                reward += 0.05 # Reward for successful effect
-                            else:
-                                print(f"Effect of {card_to_play.name} failed or had no target.")
-                                # No reward for fizzled effect
                         else:
                             print(f"Cannot play card at index {hand_index}: Not an Item card.")
                             reward -= 0.5 # Penalty for trying to play wrong card type
@@ -1219,7 +1201,6 @@ class Game:
                                  player.place_on_bench(played_card)
 
                                  action_executed = True
-                                 reward += 0.02 # Small reward for benching
                              else:
                                  print(f"Cannot play card at index {hand_index}: Not a Basic Pokemon.")
                                  reward -= 0.5 # Increased penalty
@@ -1287,9 +1268,6 @@ class Game:
                                 effect_executed, ends_turn = self._execute_ability_effect(effect_tag, player, opponent, source_pokemon)
                                 if effect_executed:
                                     self.actions_this_turn[ability_used_key] = True  # Mark ability as used *if effect succeeded*
-                                    # Define energy count for reward calculation
-                                    current_energy_count = sum(source_pokemon.attached_energy.values())
-                                    reward += 0.04
                                     # Check if the ability ends the turn
                                     if ends_turn:
                                         print(f"Ability {ability_name} ends the turn.")
@@ -1338,13 +1316,6 @@ class Game:
                                 # Remove from hand and discard regardless of effect success
                                 played_card = player.hand.pop(hand_index)
                                 player.discard_pile.append(played_card)
-
-                                if effect_executed_successfully:
-                                    reward += 0.05 # Reward for successful effect
-                                else:
-                                    print(f"Effect of {card_to_play.name} failed or had no target.")
-                                    # No reward for fizzled effect, don't penalize as invalid action
-                                # --- MODIFICATION END ---
                             else:
                                 print(f"Error: Cannot play card at index {hand_index}: Not a Supporter card.")
                                 reward -= 0.5 # Add penalty
@@ -1381,8 +1352,6 @@ class Game:
                                 effect_executed_successfully = self._execute_trainer_effect(card_to_play.effect_tag, player, opponent, target_bench_index=target_bench_index)
                                 played_card = player.hand.pop(hand_index)
                                 player.discard_pile.append(played_card)
-                                if effect_executed_successfully: reward += 0.05
-                                else: print(f"Effect of {card_to_play.name} failed or had no valid target.")
                             else:
                                 print(f"Error: Card at index {hand_index} is not Cyrus or not a Supporter.")
                                 reward -= 0.5
@@ -1415,8 +1384,6 @@ class Game:
                                 effect_executed_successfully = self._execute_trainer_effect(card_to_play.effect_tag, player, opponent, target_id=target_id)
                                 played_card = player.hand.pop(hand_index)
                                 player.discard_pile.append(played_card)
-                                if effect_executed_successfully: reward += 0.05
-                                else: print(f"Effect of {card_to_play.name} failed or had no valid target.")
                             else:
                                 print(f"Error: Card at index {hand_index} is not PCL or not a Supporter.")
                                 reward -= 0.5
@@ -1449,8 +1416,6 @@ class Game:
                                 effect_executed_successfully = self._execute_trainer_effect(card_to_play.effect_tag, player, opponent, source_bench_index=source_bench_index)
                                 played_card = player.hand.pop(hand_index)
                                 player.discard_pile.append(played_card)
-                                if effect_executed_successfully: reward += 0.05
-                                else: print(f"Effect of {card_to_play.name} failed or had no valid target/source.")
                             else:
                                 print(f"Error: Card at index {hand_index} is not Dawn or not a Supporter.")
                                 reward -= 0.5
@@ -1469,8 +1434,6 @@ class Game:
                         card_to_play = player.hand[hand_index]
                         if isinstance(card_to_play, TrainerCard) and card_to_play.trainer_type == "Item":
                             print(f"{player.name} plays Item: {card_to_play.name}")
-                            # --- MODIFICATION START ---
-                            # Mark action as executed *before* effect, as playing the card is valid here
                             action_executed = True
 
                             # Execute effect
@@ -1479,13 +1442,6 @@ class Game:
                             # Remove from hand and discard regardless of effect success
                             played_card = player.hand.pop(hand_index)
                             player.discard_pile.append(played_card)
-
-                            if effect_executed_successfully:
-                                reward += 0.05 # Reward for successful effect
-                            else:
-                                print(f"Effect of {card_to_play.name} failed or had no target.")
-                                # No reward for fizzled effect
-                            # --- MODIFICATION END ---
                         else:
                             print(f"Cannot play card at index {hand_index}: Not an Item card.")
                             reward -= 0.5 # Penalty for trying to play wrong card type
@@ -1518,7 +1474,6 @@ class Game:
                                     target_pokemon.current_hp += 20 # Also increase current HP
                                     print(f"  {target_pokemon.name} HP increased by 20 due to Giant Cape.")
                                 action_executed = True
-                                reward += 0.05 # Increased reward for attaching tool
                             else:
                                 print(f"Cannot attach {card_to_play.name}: Target invalid or already has a tool.")
                                 reward -= 0.5 # Increased penalty
@@ -1552,7 +1507,6 @@ class Game:
                                     target_pokemon.current_hp += 20 # Also increase current HP
                                     print(f"  {target_pokemon.name} HP increased by 20 due to Giant Cape.")
                                 action_executed = True
-                                reward += 0.05 # Increased reward for attaching tool
                             else:
                                 print(f"Cannot attach {card_to_play.name}: Target invalid or already has a tool.")
                                 reward -= 0.5 # Increased penalty
