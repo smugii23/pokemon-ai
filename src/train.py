@@ -25,10 +25,10 @@ from stable_baselines3.common.env_util import make_vec_env
 from rl_env import PokemonTCGPocketEnv, ACTION_MAP, ACTION_PASS # Assuming rl_env.py is accessible
 
 # --- Configuration ---
-TOTAL_TIMESTEPS = 10000000   # Adjust as needed for full training
-NUM_ENVIRONMENTS = 1     # Increase for parallel training (e.g., 4, 8, 16)
+TOTAL_TIMESTEPS = 50000000   # Adjust as needed for full training
+NUM_ENVIRONMENTS = 8     # Increase for parallel training (e.g., 4, 8, 16)
 LOG_INTERVAL = 10
-MODEL_SAVE_FREQ = 500000   # How often to save the *main* agent checkpoint
+MODEL_SAVE_FREQ = 1000000   # How often to save the *main* agent checkpoint
 LOG_PATH = "logs/pokemon_ppo_selfplay_v2" # New log dir recommended
 MODEL_SAVE_PATH = "models/pokemon_ppo_selfplay_v2/agent" # Base path for agent saves
 CHECKPOINT_DIR = "models/ppo_checkpoints_v2" # Directory for historical opponents
@@ -37,7 +37,7 @@ VEC_NORMALIZE_SAVE_PATH = os.path.join(os.path.dirname(MODEL_SAVE_PATH), "vecnor
 # --- Opponent Checkpoint Configuration ---
 OPPONENT_CHECKPOINT_FREQ = 500000 # How often to save a version for the opponent pool (adjust)
 CLEAN_CHECKPOINTS_ON_START = False # Set to True to remove old checkpoints before new training
-N_RESETS_BEFORE_NEW_OPPONENT = 50
+N_RESETS_BEFORE_NEW_OPPONENT = 75
 
 # --- PPO Hyperparameters (Keep or adjust) ---
 HYPERPARAMS = {
@@ -89,6 +89,7 @@ class WinRateCallback(BaseCallback):
         self.check_freq = check_freq
         self.log_name = log_name
         self.win_buffer = deque(maxlen=100)
+        self.pbar = None
 
     def _on_step(self) -> bool:
         """
