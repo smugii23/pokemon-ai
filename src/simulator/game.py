@@ -282,12 +282,11 @@ class Game:
                         return []
                     return actions
 
-                # 2. can choose bench pokemon (optional) if active is chosen and bench isn't full
+                # can choose bench pokemon (optional) if active is chosen and bench isn't full
                 # need to track which hand indices are already assigned to pending active/bench
                 assigned_hand_indices = set()
                 if player.pending_setup_active:
-                    # Find the hand index corresponding to the pending active card
-                    # This assumes card instances are unique or we track index on selection
+                    # find the index in hand for which card is going to be the active pokemon
                     try:
                         active_card_instance = player.pending_setup_active
                         active_index = player.hand.index(active_card_instance)
@@ -306,140 +305,105 @@ class Game:
                 can_add_to_bench = len(player.pending_setup_bench) < MAX_BENCH_SIZE
                 if can_add_to_bench:
                     for i, card in enumerate(player.hand):
-                        # Check if card is basic and not already assigned to active/bench
+                        # check if card is basic and not assigned to the bench
                         if i not in assigned_hand_indices and isinstance(card, PokemonCard) and card.is_basic:
                             action_name = f"{ACTION_SETUP_CHOOSE_BENCH_FROM_HAND_PREFIX}{i}"
                             actions.append(action_name)
 
-                # 3. Can confirm ready if Active has been chosen
+                # if an active pokemon is chosen, can confirm ready
                 if player.pending_setup_active is not None:
                     actions.append(ACTION_SETUP_CONFIRM_READY)
-                return actions # Return only setup actions for the player who isn't ready
+                return actions # return setup actions for player who isn't ready
 
-            # If the current player *is* ready, but the opponent is not, player must PASS (wait)
-            else: # player.setup_ready is True, but opponent.setup_ready is False
-                return [ACTION_PASS] # Only action is to wait
+            # if the current player is ready but the opponent is not, player must pass
+            else: 
+                return [ACTION_PASS]
 
         # check the possible actions:
         can_attach_energy_this_turn = not self.actions_this_turn.get("energy_attached", False)
-        # The absolute first turn of the game cannot attach energy or attack.
+        # the person going first, cannot attach an energy on their pokemon (no energy in available slot)
         is_game_first_turn = self.game_state.is_first_turn
 
         # attach energy
         if player.energy_stand_available and can_attach_energy_this_turn and not is_game_first_turn:
-             # print(f"DEBUG: Condition met for attaching energy.") # DEBUG
              # check potential targets (active and bench)
              if player.active_pokemon and not player.active_pokemon.is_fainted:
-                 # print(f"DEBUG: Adding action: {ACTION_ATTACH_ENERGY_ACTIVE}") # DEBUG
                  actions.append(ACTION_ATTACH_ENERGY_ACTIVE)
              for i, bench_pokemon in enumerate(player.bench):
                  if bench_pokemon and not bench_pokemon.is_fainted:
-                     action_name = f"{ACTION_ATTACH_ENERGY_BENCH_PREFIX}{i}"
-                     # print(f"DEBUG: Adding action: {action_name}") # DEBUG
-                     actions.append(action_name)
-        # else: # DEBUG
-            # print(f"DEBUG: Condition NOT met for attaching energy.") # DEBUG
-            # if not player.energy_stand_available: print("  Reason: No energy available in stand.") # DEBUG
-            # if not can_attach_energy_this_turn: print("  Reason: Energy already attached this turn.") # DEBUG
-            # if is_game_first_turn: print("  Reason: Is the absolute first turn of the game.") # DEBUG
-
+                    action_name = f"{ACTION_ATTACH_ENERGY_BENCH_PREFIX}{i}"
+                    actions.append(action_name)
 
         # check attack actions (cannot attack on first turn)
         if player.active_pokemon and not player.active_pokemon.is_fainted and not is_game_first_turn:
-            # print(f"DEBUG: Checking attacks for {player.active_pokemon.name} (Energy: {player.active_pokemon.attached_energy})") # DEBUG
             for i, attack in enumerate(player.active_pokemon.attacks):
-                 # print(f"DEBUG:  Checking attack '{attack.name}' (Cost: {attack.cost})") # DEBUG
                  can_attack_flag = player.active_pokemon.can_attack(i)
-                 # print(f"DEBUG:  can_attack({i}) returned: {can_attack_flag}") # DEBUG
                  if can_attack_flag:
-                     action_name = f"{ACTION_ATTACK_PREFIX}{i}"
-                     # print(f"DEBUG: Adding action: {action_name}") # DEBUG
-                     actions.append(action_name)
-        # else: # DEBUG
-            # if not player.active_pokemon: print("DEBUG: No active pokemon to attack with.") # DEBUG
-            # elif player.active_pokemon.is_fainted: print("DEBUG: Active pokemon is fainted.") # DEBUG
-            # elif is_game_first_turn: print("DEBUG: Cannot attack on the first turn.") # DEBUG
-
+                    action_name = f"{ACTION_ATTACK_PREFIX}{i}"
+                    actions.append(action_name)
 
         # play a basic pokemon onto the bench
         if player.can_place_on_bench():
-            # print(f"DEBUG: Checking hand for basic Pokemon to bench.") # DEBUG
             for i, card in enumerate(player.hand):
-                 if isinstance(card, PokemonCard) and card.is_basic:
-                     action_name = f"{ACTION_PLAY_BASIC_BENCH_PREFIX}{i}"
-                     # print(f"DEBUG: Adding action: {action_name} (Card: {card.name})") # DEBUG
-                     actions.append(action_name)
-        # else: # DEBUG
-            # print("DEBUG: Cannot place on bench (bench full).") # DEBUG
+                if isinstance(card, PokemonCard) and card.is_basic:
+                    action_name = f"{ACTION_PLAY_BASIC_BENCH_PREFIX}{i}"
+                    actions.append(action_name)
 
-        # Check for using ACTIVE ability
+        # check if there is an active ability you could use
         if player.active_pokemon and player.active_pokemon.ability:
             ability_data = player.active_pokemon.ability
             ability_name = ability_data.get("name")
             ability_type = ability_data.get("type")
             ability_used_key = f"ability_used_{ability_name}"
-            # print(f"DEBUG: Checking ability '{ability_name}' (Type: {ability_type}, Used: {self.actions_this_turn.get(ability_used_key, False)})") # DEBUG
-            # Allow any Active ability that hasn't been used this turn
+            # allow any active ability that hasn't been used this turn
             if ability_type == "Active" and not self.actions_this_turn.get(ability_used_key, False):
-                 # print(f"DEBUG: Adding action: {ACTION_USE_ABILITY_ACTIVE}") # DEBUG
-                 actions.append(ACTION_USE_ABILITY_ACTIVE)
-        # Check for using BENCH abilities
-        # ACTION_USE_ABILITY_BENCH_PREFIX = "USE_ABILITY_BENCH_" # Defined above
+                actions.append(ACTION_USE_ABILITY_ACTIVE)
+        # check for bench abilities
         for i, bench_pokemon in enumerate(player.bench):
              if bench_pokemon and bench_pokemon.ability:
                  ability_data = bench_pokemon.ability
                  ability_name = ability_data.get("name")
                  ability_type = ability_data.get("type")
-                 ability_used_key = f"ability_used_{ability_name}" # Assume ability names are unique for now
-                 # print(f"DEBUG: Checking bench {i} ability '{ability_name}' (Type: {ability_type}, Used: {self.actions_this_turn.get(ability_used_key, False)})") # DEBUG
-                 # Allow any Active ability that hasn't been used this turn
+                 ability_used_key = f"ability_used_{ability_name}"
                  if ability_type == "Active" and not self.actions_this_turn.get(ability_used_key, False):
                      action_name = f"{ACTION_USE_ABILITY_BENCH_PREFIX}{i}"
-                     # print(f"DEBUG: Adding action: {action_name}") # DEBUG
                      actions.append(action_name)
 
 
-        # Check for playing Trainer cards
+        # check for playing trainer cards
         can_play_supporter = not self.actions_this_turn.get("supporter_played", False)
-        # print(f"DEBUG: Checking hand for Trainers (Can play supporter: {can_play_supporter})") # DEBUG
         for i, card in enumerate(player.hand):
             if isinstance(card, TrainerCard):
-                # print(f"DEBUG:  Found Trainer: {card.name} (Type: {card.trainer_type}, Effect: {card.effect_tag}) at index {i}") # DEBUG
                 if card.trainer_type == "Supporter":
                     if can_play_supporter:
-                        # --- Add specific checks for Supporters ---
-                        can_play_this_supporter = True # Assume true initially
+                        can_play_this_supporter = True
                         effect_tag = card.effect_tag
 
                         if effect_tag == "TRAINER_SUPPORTER_SABRINA_SWITCH_OUT_YOUR_OPPONENT":
-                            # Check if opponent has a valid bench Pokemon to switch to
+                            # check if opponent has a valid bench pokemon
                             has_valid_bench = any(p and not p.is_fainted for p in opponent.bench)
                             if not opponent.active_pokemon or not has_valid_bench:
                                 can_play_this_supporter = False
-                                # print(f"DEBUG: Cannot add Sabrina action: Opponent has no valid active/bench.") # DEBUG
 
                         elif effect_tag == "TRAINER_SUPPORTER_CYRUS_SWITCH_IN_1_OF_YOUR_OPPONE":
-                            # Check if opponent has a damaged, non-fainted bench Pokemon
+                            # cyrus can only be used if the opponent has a damaged bench pokemon
                             has_damaged_bench = any(p and not p.is_fainted and p.current_hp < p.hp for p in opponent.bench)
                             if not opponent.active_pokemon or not has_damaged_bench:
                                 can_play_this_supporter = False
-                                # print(f"DEBUG: Cannot add Cyrus action: Opponent has no damaged bench.") # DEBUG
 
                         elif effect_tag == "TRAINER_SUPPORTER_DAWN_MOVE_AN_ENERGY_FROM_1_OF_YO":
-                            # Check if player has a benched Pokemon with energy AND an active Pokemon
+                            # dawn can only be used if there is a benched pokemon with an energy on it on the player's side
                             has_benched_energy = any(p and not p.is_fainted and p.attached_energy for p in player.bench)
                             if not player.active_pokemon or player.active_pokemon.is_fainted or not has_benched_energy:
                                 can_play_this_supporter = False
-                                # print(f"DEBUG: Cannot add Dawn action: No valid source/target.") # DEBUG
 
                         elif effect_tag == "TRAINER_SUPPORTER_TEAM_ROCKET_GRUNT_FLIP_A_COIN_UN":
-                            # Check if opponent's active Pokemon exists, is not fainted, and has energy
+                            # Ccheck if opponent's active exists, isn't fainted, and has energy on it
                             if not opponent.active_pokemon or opponent.active_pokemon.is_fainted or not opponent.active_pokemon.attached_energy:
                                 can_play_this_supporter = False
-                                # print(f"DEBUG: Cannot add TR Grunt action: Opponent active has no energy.") # DEBUG
 
                         elif effect_tag == "TRAINER_SUPPORTER_POKÉMON_CENTER_LADY_HEAL_30_DAMA":
-                            # Check if any player Pokemon is damaged
+                            # check if the player has any damaged pokemon (can be active or bench)
                             is_any_pokemon_damaged = False
                             if player.active_pokemon and player.active_pokemon.current_hp < player.active_pokemon.hp:
                                 is_any_pokemon_damaged = True
@@ -450,19 +414,18 @@ class Game:
                                         break
                             if not is_any_pokemon_damaged:
                                 can_play_this_supporter = False
-                                # print(f"DEBUG: Cannot add PCL action: No damaged Pokemon.") # DEBUG
 
-                        # --- Generate Target-Specific or Generic Supporter Actions ---
+                        # target specific supporters:
                         if effect_tag == "TRAINER_SUPPORTER_CYRUS_SWITCH_IN_1_OF_YOUR_OPPONE":
-                            if can_play_this_supporter: # Basic check passed
-                                # Find specific targets
+                            if can_play_this_supporter:
+                                # find the target's index on the opponent's bench
                                 for bench_idx, p in enumerate(opponent.bench):
                                     if p and not p.is_fainted and p.current_hp < p.hp:
                                         action_name = f"{ACTION_PLAY_SUPPORTER_CYRUS_TARGET_PREFIX}{i}_{bench_idx}"
                                         actions.append(action_name)
                         elif effect_tag == "TRAINER_SUPPORTER_POKÉMON_CENTER_LADY_HEAL_30_DAMA":
-                             if can_play_this_supporter: # Basic check passed (includes damage check now)
-                                 # Find specific targets
+                             if can_play_this_supporter:
+                                 # find index o fdamaged pokemon on player's bench
                                  if player.active_pokemon and not player.active_pokemon.is_fainted and player.active_pokemon.current_hp < player.active_pokemon.hp:
                                      action_name = f"{ACTION_PLAY_SUPPORTER_PCL_TARGET_PREFIX}{i}_active"
                                      actions.append(action_name)
@@ -471,27 +434,24 @@ class Game:
                                          action_name = f"{ACTION_PLAY_SUPPORTER_PCL_TARGET_PREFIX}{i}_bench_{bench_idx}"
                                          actions.append(action_name)
                         elif effect_tag == "TRAINER_SUPPORTER_DAWN_MOVE_AN_ENERGY_FROM_1_OF_YO":
-                             if can_play_this_supporter: # Basic check passed
-                                 # Find specific sources (target is always active)
+                             if can_play_this_supporter:
+                                 # find the energy to take from (receiver is always active)
                                  if player.active_pokemon and not player.active_pokemon.is_fainted:
                                      for bench_idx, p in enumerate(player.bench):
                                          if p and not p.is_fainted and p.attached_energy:
                                              action_name = f"{ACTION_PLAY_SUPPORTER_DAWN_SOURCE_TARGET_PREFIX}{i}_{bench_idx}"
                                              actions.append(action_name)
-                        # --- Add Generic Action for other Supporters ---
-                        elif can_play_this_supporter: # For supporters not handled above
+                        # all other supporters
+                        elif can_play_this_supporter:
                             action_name = f"{ACTION_PLAY_SUPPORTER_PREFIX}{i}"
                             actions.append(action_name)
-                        # else: # DEBUG
-                            # print(f"DEBUG: Supporter {card.name} condition not met.") # DEBUG
 
                 elif card.trainer_type == "Item":
-                    can_play_this_item = True # Assume true initially
+                    can_play_this_item = True 
                     effect_tag = card.effect_tag
 
-                    # --- Add specific checks and Generate Target-Specific or Generic Item Actions ---
+                    # target specific itmes
                     if effect_tag == "TRAINER_ITEM_POTION_HEAL_20_DAMAGE_FROM_1_OF_YOUR_":
-                        # Check if any player Pokemon is damaged (redundant check kept for safety)
                         is_any_pokemon_damaged = False
                         if player.active_pokemon and player.active_pokemon.current_hp < player.active_pokemon.hp:
                             is_any_pokemon_damaged = True
@@ -502,9 +462,8 @@ class Game:
                                     break
                         if not is_any_pokemon_damaged:
                             can_play_this_item = False
-                            # print(f"DEBUG: Cannot add Potion action: No damaged Pokemon.") # DEBUG
                         else:
-                            # Generate target-specific actions
+                            # generate target specific actions
                             if player.active_pokemon and not player.active_pokemon.is_fainted and player.active_pokemon.current_hp < player.active_pokemon.hp:
                                 action_name = f"{ACTION_PLAY_ITEM_POTION_TARGET_PREFIX}{i}_active"
                                 actions.append(action_name)
@@ -513,60 +472,40 @@ class Game:
                                     action_name = f"{ACTION_PLAY_ITEM_POTION_TARGET_PREFIX}{i}_bench_{bench_idx}"
                                     actions.append(action_name)
 
-                    # Add other item checks here...
-
-                    # --- Add Generic Action for other Items ---
-                    elif can_play_this_item: # For items not handled above
+                    # non-target specific items:
+                    elif can_play_this_item:
                         action_name = f"{ACTION_PLAY_ITEM_PREFIX}{i}"
                         actions.append(action_name)
-                    # else: # DEBUG
-                        # print(f"DEBUG: Item {card.name} condition not met.") # DEBUG
 
                 elif card.trainer_type == "Tool":
-                    # Check potential targets
+                    # check potential targets
                     if player.active_pokemon and not player.active_pokemon.is_fainted and player.active_pokemon.attached_tool is None:
                         action_name = f"{ACTION_ATTACH_TOOL_ACTIVE}{i}"
-                        # print(f"DEBUG: Adding action: {action_name} (Target: Active)") # DEBUG
                         actions.append(action_name)
                     for bench_idx, bench_pokemon in enumerate(player.bench):
                         if bench_pokemon and not bench_pokemon.is_fainted and bench_pokemon.attached_tool is None:
                             action_name = f"{ACTION_ATTACH_TOOL_BENCH_PREFIX}{bench_idx}_{i}"
-                            # print(f"DEBUG: Adding action: {action_name} (Target: Bench {bench_idx})") # DEBUG
+
                             actions.append(action_name)
 
-        # Check for retreating
+        # check for retreating
         can_retreat_this_turn = not self.actions_this_turn.get("retreat_used", False)
         if can_retreat_this_turn and player.active_pokemon and not player.active_pokemon.is_fainted and player.bench:
-            # Check if there's at least one valid Pokemon to switch into on the bench
+            # first, check if there are valid pokemon on the bench to switch to
             valid_bench_targets = [i for i, p in enumerate(player.bench) if p and not p.is_fainted]
             if valid_bench_targets:
-                # Check if active Pokemon can afford the retreat cost (considering Leaf)
+                # check if the pokemon has enough energy to retreat (consider leaf, which redued retreat energy by 2)
                 retreat_cost_modifier = -2 if self.actions_this_turn.get("leaf_effect_active", False) else 0
                 if player.active_pokemon.can_retreat(current_turn_cost_modifier=retreat_cost_modifier):
-                    # print(f"DEBUG: Checking retreat action (Can afford cost).") # DEBUG
                     for bench_idx in valid_bench_targets:
                         action_name = f"{ACTION_RETREAT_TO_BENCH_PREFIX}{bench_idx}"
-                        # print(f"DEBUG: Adding action: {action_name}") # DEBUG
                         actions.append(action_name)
-                # else: # DEBUG
-                    # print(f"DEBUG: Cannot retreat (cannot afford cost: {player.active_pokemon.retreat_cost + retreat_cost_modifier}, Attached: {sum(player.active_pokemon.attached_energy.values())}).") # DEBUG
-            # else: # DEBUG
-                # print("DEBUG: Cannot retreat (no valid bench Pokemon to promote).") # DEBUG
-        # else: # DEBUG
-            # print(f"DEBUG: Condition NOT met for retreating.") # DEBUG
-            # if not can_retreat_this_turn: print("  Reason: Already retreated this turn.") # DEBUG
-            # if not player.active_pokemon: print("  Reason: No active Pokemon.") # DEBUG
-            # if player.active_pokemon and player.active_pokemon.is_fainted: print("  Reason: Active Pokemon is fainted.") # DEBUG
-            # if not player.bench: print("  Reason: Bench is empty.") # DEBUG
 
+        # TODO: currently, in the giratina darkrai deck, there are no evolutions, but in the future, I will implement evolutions
 
-        # TODO: Add actions for evolving etc.
-
-        # also have the option to just pass
-        # print(f"DEBUG: Adding action: {ACTION_PASS}") # DEBUG
+        # passing is an option as well
         actions.append(ACTION_PASS)
 
-        # print(f"DEBUG: Final generated actions: {actions}") # DEBUG
         return actions
 
     def step(self, action: str) -> Tuple[Any, float, bool]:
@@ -578,208 +517,197 @@ class Game:
         reward = -0.01 # this is the default reward for taking a step
         done = False
         info = {} # just for debugging or extra info
-        # ACTION_USE_ABILITY_BENCH_PREFIX = "USE_ABILITY_BENCH_" # Defined globally now
 
         print(f"Player {player.name} attempts action: {action}")
 
+        # beginning of turn, reset action_executed, check if it's the first turn of the game, and if it's in the setup phase
         action_executed = False
-        is_game_first_turn_overall = self.game_state.is_first_turn # Check if it's the absolute first turn
+        is_game_first_turn_overall = self.game_state.is_first_turn 
         player_idx = self.game_state.current_player_index
         is_setup_phase = not player.setup_ready or not opponent.setup_ready
 
-        # --- Handle NEW Simultaneous Setup Actions ---
+        # setup phase:
         if is_setup_phase:
-            # Actions for the player who is NOT ready yet
             if not player.setup_ready:
                 if action.startswith(ACTION_SETUP_CHOOSE_ACTIVE_FROM_HAND_PREFIX):
+                    # check that active is not chosen yet
                     if player.pending_setup_active is not None:
                         print(f"Error: Player {player.name} tried {action}, but already chose a pending active.")
-                        reward = -0.5 # Increased penalty
+                        reward = -0.5
                     else:
                         try:
+                            # get index of pokemon in hand
                             hand_index = int(action.split('_')[-1])
                             if 0 <= hand_index < len(player.hand):
                                 card_to_choose = player.hand[hand_index]
-                                # Ensure card hasn't been chosen for bench already
+                                # make sure that this card hasn't been chosen to be benched already
                                 already_chosen_for_bench = card_to_choose in player.pending_setup_bench
                                 if isinstance(card_to_choose, PokemonCard) and card_to_choose.is_basic and not already_chosen_for_bench:
-                                    player.pending_setup_active = card_to_choose # Store reference
+                                    player.pending_setup_active = card_to_choose
                                     print(f"{player.name} chose {card_to_choose.name} as pending Active.")
                                     action_executed = True
                                     reward += 0.01
                                 elif already_chosen_for_bench:
                                     print(f"Error: Card at index {hand_index} ({card_to_choose.name}) is already chosen for bench.")
-                                    reward -= 0.5 # Increased penalty
+                                    reward -= 0.5
                                 else:
                                     print(f"Error: Card at index {hand_index} is not a Basic Pokemon.")
-                                    reward -= 0.5 # Increased penalty
+                                    reward -= 0.5
                             else:
                                 print(f"Error: Invalid hand index {hand_index} in action {action}.")
-                                reward -= 0.5 # Increased penalty
+                                reward -= 0.5
                         except (ValueError, IndexError):
                             print(f"Error: Invalid action format {action}.")
-                            reward -= 0.5 # Increased penalty
+                            reward -= 0.5
 
                 elif action.startswith(ACTION_SETUP_CHOOSE_BENCH_FROM_HAND_PREFIX):
                     if player.pending_setup_active is None:
                         print(f"Error: Player {player.name} tried {action}, but must choose active first.")
-                        reward = -0.5 # Increased penalty
+                        reward = -0.5
                     elif len(player.pending_setup_bench) >= MAX_BENCH_SIZE:
                         print(f"Error: Player {player.name} tried {action}, but pending bench is full.")
-                        reward = -0.5 # Increased penalty
+                        reward = -0.5
                     else:
                         try:
                             hand_index = int(action.split('_')[-1])
                             if 0 <= hand_index < len(player.hand):
                                 card_to_choose = player.hand[hand_index]
-                                # Check if card is already chosen for active or bench
+                                # check if card is already chosen for active or bench
                                 already_chosen = (card_to_choose == player.pending_setup_active or
                                                   card_to_choose in player.pending_setup_bench)
 
                                 if isinstance(card_to_choose, PokemonCard) and card_to_choose.is_basic and not already_chosen:
-                                    player.pending_setup_bench.append(card_to_choose) # Store reference
+                                    player.pending_setup_bench.append(card_to_choose)
                                     print(f"{player.name} added {card_to_choose.name} to pending Bench.")
                                     action_executed = True
                                     reward += 0.01
                                 elif already_chosen:
                                     print(f"Error: Card at index {hand_index} ({card_to_choose.name}) is already chosen for setup.")
-                                    reward -= 0.5 # Increased penalty
+                                    reward -= 0.5
                                 else:
                                     print(f"Error: Card at index {hand_index} is not a Basic Pokemon.")
-                                    reward -= 0.5 # Increased penalty
+                                    reward -= 0.5 
                             else:
                                 print(f"Error: Invalid hand index {hand_index} in action {action}.")
-                                reward -= 0.5 # Increased penalty
+                                reward -= 0.5 
                         except (ValueError, IndexError):
                             print(f"Error: Invalid action format {action}.")
-                            reward -= 0.5 # Increased penalty
+                            reward -= 0.5
 
                 elif action == ACTION_SETUP_CONFIRM_READY:
                     if player.pending_setup_active is None:
                         print(f"Error: Player {player.name} tried to confirm ready without choosing an active.")
-                        reward = -0.5 # Increased penalty
+                        reward = -0.5
                     else:
                         player.setup_ready = True
                         action_executed = True
                         reward += 0.01
                         print(f"{player.name} confirmed setup readiness.")
-                        # Check if opponent is also ready
+                        # check if opponent is also ready
                         if opponent.setup_ready:
                             print("Both players ready! Committing setup choices.")
                             self._commit_setup_choices()
-                            # Setup complete, start the first turn for the designated starting player
-                            print("Setup complete. Starting first turn.")
-                            self._start_turn() # This sets the correct player and turn state
-                            # Game now proceeds to normal turn logic for the starting player
+                            self._start_turn()
                         else:
-                            # Opponent not ready, manually switch index so they can act, DO NOT call switch_turn()
                             print(f"{player.name} is ready, switching to {opponent.name} for setup (manual index flip).")
                             self.game_state.current_player_index = 1 - self.game_state.current_player_index
-                            # self.game_state.switch_turn() # DO NOT CALL THIS HERE
 
                 elif action == ACTION_PASS:
-                     print(f"Error: Player {player.name} tried to pass while still needing to choose setup.")
-                     reward = -0.5 # Increased penalty
-                     action_executed = False # Invalid pass
+                    print(f"Error: Player {player.name} tried to pass while still needing to choose setup.")
+                    reward = -0.5
+                    action_executed = False
                 else:
-                     reward = -0.5 # Increased penalty
-                     action_executed = False
+                    reward = -0.5
+                    action_executed = False
 
-            # Action for the player who IS ready, but opponent is not
+            # action for the play who's ready, but opponent isn't (just pass)
             elif player.setup_ready and not opponent.setup_ready:
                 if action == ACTION_PASS:
                     print(f"{player.name} is ready and passes, waiting for {opponent.name} (manual index flip).")
                     action_executed = True
-                    # Manually switch index so opponent can continue setup, DO NOT call switch_turn()
                     self.game_state.current_player_index = 1 - self.game_state.current_player_index
-                    # self.game_state.switch_turn() # DO NOT CALL THIS HERE
                 else:
                     print(f"Error: Player {player.name} is ready but opponent is not. Only PASS is allowed. Tried '{action}'.")
-                    reward = -0.5 # Increased penalty
+                    reward = -0.5
                     action_executed = False
 
-        # --- Handle Normal Turn Actions (Only if setup is complete) ---
-        # --- CORRECTED if/elif structure for normal actions ---
+        # after setup phase, normal turn actions: 
         elif not is_setup_phase:
-            action_was_known = True # Flag to track if action matched a known pattern
+            action_was_known = True
             if action == ACTION_PASS:
                 print("Turn passed.")
-                action_executed = True # Passing is always a valid execution
+                action_executed = True
 
             elif action == ACTION_ATTACH_ENERGY_ACTIVE:
-                # Ensure player has an active pokemon first (should be true after setup)
+                # double check the player has an active pokemon
                 if not player.active_pokemon:
-                     print("Error: Cannot attach energy, player has no active Pokemon (Setup likely incomplete).")
-                     reward = -0.5 # Increased penalty
-                     # action_executed remains False
-                elif is_game_first_turn_overall: # Use the flag checked at the start of step
-                     print("Error: Cannot attach energy on the first turn of the game.")
-                     reward = -0.5 # Increased penalty
-                     # action_executed remains False
+                    print("Error: Cannot attach energy, player has no active Pokemon (Setup likely incomplete).")
+                    reward = -0.5 
+                elif is_game_first_turn_overall:
+                    print("Error: Cannot attach energy on the first turn of the game.")
+                    reward = -0.5
                 else:
                     can_attach_energy_this_turn = not self.actions_this_turn.get("energy_attached", False)
                     energy_to_attach = player.energy_stand_available # get the energy type from the stand
 
                     if energy_to_attach and can_attach_energy_this_turn and player.active_pokemon:
-                          # Check energy count BEFORE attaching
-                          current_energy_count = sum(player.active_pokemon.attached_energy.values())
-                          player.active_pokemon.attach_energy(energy_to_attach)
-                          player.energy_stand_available = None # actually consume the energy form the energy stand
-                          self.actions_this_turn["energy_attached"] = True
-                          action_executed = True
-                          # Reward is now set above based on condition
+                        # check the energy count, then attatch the energy
+                        current_energy_count = sum(player.active_pokemon.attached_energy.values())
+                        player.active_pokemon.attach_energy(energy_to_attach)
+                        player.energy_stand_available = None # actually consume the energy form the energy stand
+                        self.actions_this_turn["energy_attached"] = True
+                        action_executed = True
 
-                          # --- Check for Nightmare Aura (Darkrai ex) ---
-                          if player.active_pokemon.name == "Darkrai ex" and energy_to_attach == "Darkness":
-                             print(f"Ability Trigger: {player.active_pokemon.name}'s Nightmare Aura!")
-                             opponent = self.game_state.get_opponent()
-                             if opponent.active_pokemon and not opponent.active_pokemon.is_fainted:
-                                 opponent.active_pokemon.take_damage(20)
-                                 print(f"  Nightmare Aura dealt 20 damage to {opponent.active_pokemon.name}.")
-                                 # Check for KO from ability damage
-                                 if opponent.active_pokemon.is_fainted:
-                                     points_scored = 2 if opponent.active_pokemon.is_ex else 1
-                                     print(f"  {opponent.active_pokemon.name} fainted from Nightmare Aura. {player.name} scores {points_scored} point(s).")
-                                     player.add_point(points_scored)
-                                     reward += 1.5 * points_scored
-                                     winner = self.game_state.check_win_condition()
-                                     if winner:
-                                         print(f"Game Over. Winner: {winner.name}")
-                                         reward += 5.0 # Big reward for winning
-                                         done = True
-                                     elif not opponent.promote_bench_pokemon():
-                                          print(f"Game Over. {opponent.name} has no Pokemon to promote. Winner: {player.name}")
-                                          reward += 5.0 # Reward for winning
-                                          done = True
+                          # if a darkness energy is placed on darkrai ex, it triggers it's passive ability, nightmare aura (deals 20 damage to opponent's active)
+                        if player.active_pokemon.name == "Darkrai ex" and energy_to_attach == "Darkness":
+                            print(f"Ability Trigger: {player.active_pokemon.name}'s Nightmare Aura!")
+                            opponent = self.game_state.get_opponent()
+                            if opponent.active_pokemon and not opponent.active_pokemon.is_fainted:
+                                opponent.active_pokemon.take_damage(20)
+                                print(f"  Nightmare Aura dealt 20 damage to {opponent.active_pokemon.name}.")
+                                # check if the opponent's active fainted from nightmare aura
+                                if opponent.active_pokemon.is_fainted:
+                                    points_scored = 2 if opponent.active_pokemon.is_ex else 1
+                                    print(f"  {opponent.active_pokemon.name} fainted from Nightmare Aura. {player.name} scores {points_scored} point(s).")
+                                    player.add_point(points_scored)
+                                    reward += 1.5 * points_scored
+                                    winner = self.game_state.check_win_condition()
+                                    if winner:
+                                        print(f"Game Over. Winner: {winner.name}")
+                                        reward += 5.0 
+                                        done = True
+                                    elif not opponent.promote_bench_pokemon():
+                                        print(f"Game Over. {opponent.name} has no Pokemon to promote. Winner: {player.name}")
+                                        reward += 5.0 
+                                        done = True
 
-                    else: # This else corresponds to the 'if energy_to_attach and can_attach_energy_this_turn and player.active_pokemon:'
+                    else: # this else corresponds to the 'if energy_to_attach and can_attach_energy_this_turn and player.active_pokemon:'
                          print(f"Cannot attach energy (Available: {energy_to_attach}, Attached This Turn: {not can_attach_energy_this_turn}).")
-                         # Keep penalty for trying illegal attach
                          if energy_to_attach and not can_attach_energy_this_turn:
-                             reward -= 0.5 # Increased penalty
-                         # action_executed remains False
+                             reward -= 0.5
             elif action.startswith(ACTION_OPP_PLAY_SUPPORTER_PREFIX):
+                reward = -0.01
                 can_play_supporter = not self.actions_this_turn.get("supporter_played", False)
                 if not can_play_supporter:
                     print("Error: Cannot play Supporter: Already played one this turn.")
                     reward -= 0.5
-                    action_executed = False # Invalid action timing
+                    action_executed = False
                 else:
                     try:
-                        # Extract Card Name and Target Info
-                        # Format: OPP_PLAY_SUPPORTER_Card-Name-With-Hyphens[_TargetInfo...]
+                        # extract the card name and target
                         action_parts = action.replace(ACTION_OPP_PLAY_SUPPORTER_PREFIX, "").split('_')
                         card_name_hyphenated = action_parts[0]
-                        card_name = card_name_hyphenated.replace('-', ' ') # Convert back
+                        card_name = card_name_hyphenated.replace('-', ' ')
                         target_info_parts = action_parts[1:]
-
+                        
+                        # use ghost cards for play_via_relay so that you can instantiate cards as the game requires them
                         ghost_card = self._instantiate_card_from_name(card_name)
 
                         if isinstance(ghost_card, TrainerCard) and ghost_card.trainer_type == "Supporter":
                             print(f"Opponent plays Supporter (Ghost): {ghost_card.name}")
 
-                            # --- Parse Target Info based on card ---
-                            target_kwargs = {} # Arguments for _execute_trainer_effect
+                            # get target info based on card
+                            target_kwargs = {}
                             effect_tag = ghost_card.effect_tag
                             parse_error = False
                             if effect_tag == "TRAINER_SUPPORTER_CYRUS_SWITCH_IN_1_OF_YOUR_OPPONE":
@@ -802,18 +730,16 @@ class Game:
                                      except ValueError: parse_error = True
                                 else: parse_error = True
                                 if parse_error: print(f"Error: Invalid target format for Dawn ghost card. Expected source bench index.")
-                            # Add more target parsing here if needed for other opponent supporters
 
                             if parse_error:
                                  reward -= 0.5
                                  action_executed = False
                             else:
-                                action_executed = True # Assume valid play attempt
+                                action_executed = True
                                 self.actions_this_turn["supporter_played"] = True
                                 effect_executed_successfully = self._execute_trainer_effect(
-                                    effect_tag, player, opponent, **target_kwargs # Pass parsed targets
+                                    effect_tag, player, opponent, **target_kwargs
                                 )
-                                # Add ghost card to discard AFTER effect attempt
                                 player.discard_pile.append(ghost_card)
                         elif ghost_card is None:
                             print(f"Error: Could not instantiate opponent supporter '{card_name}'.")
@@ -828,49 +754,48 @@ class Game:
                         reward -= 0.5
                         action_executed = False
 
-            # --- Handle Opponent Play Item (Ghost Card) ---
+            # handle ghost item cards
             elif action.startswith(ACTION_OPP_PLAY_ITEM_PREFIX):
+                 reward = -0.01
                  try:
-                     # Format: OPP_PLAY_ITEM_Card-Name-With-Hyphens[_TargetInfo...]
-                     action_parts = action.replace(ACTION_OPP_PLAY_ITEM_PREFIX, "").split('_')
-                     card_name_hyphenated = action_parts[0]
-                     card_name = card_name_hyphenated.replace('-', ' ')
-                     target_info_parts = action_parts[1:]
+                    # extract the card name and target index
+                    action_parts = action.replace(ACTION_OPP_PLAY_ITEM_PREFIX, "").split('_')
+                    card_name_hyphenated = action_parts[0]
+                    card_name = card_name_hyphenated.replace('-', ' ')
+                    target_info_parts = action_parts[1:]
 
-                     ghost_card = self._instantiate_card_from_name(card_name)
+                    ghost_card = self._instantiate_card_from_name(card_name)
 
-                     if isinstance(ghost_card, TrainerCard) and ghost_card.trainer_type == "Item":
-                         print(f"Opponent plays Item (Ghost): {ghost_card.name}")
+                    if isinstance(ghost_card, TrainerCard) and ghost_card.trainer_type == "Item":
+                        print(f"Opponent plays Item (Ghost): {ghost_card.name}")
 
-                         # --- Parse Target Info based on card ---
-                         target_kwargs = {}
-                         effect_tag = ghost_card.effect_tag
-                         parse_error = False
-                         if effect_tag == "TRAINER_ITEM_POTION_HEAL_20_DAMAGE_FROM_1_OF_YOUR_":
-                             if len(target_info_parts) == 1 and target_info_parts[0] == "active":
-                                 target_kwargs['target_id'] = "active"
-                             elif len(target_info_parts) == 2 and target_info_parts[0] == "bench":
+                        # same as supporters, get target info based on card
+                        target_kwargs = {}
+                        effect_tag = ghost_card.effect_tag
+                        parse_error = False
+                        if effect_tag == "TRAINER_ITEM_POTION_HEAL_20_DAMAGE_FROM_1_OF_YOUR_":
+                            if len(target_info_parts) == 1 and target_info_parts[0] == "active":
+                                target_kwargs['target_id'] = "active"
+                            elif len(target_info_parts) == 2 and target_info_parts[0] == "bench":
                                  try: target_kwargs['target_id'] = f"bench_{int(target_info_parts[1])}"
                                  except ValueError: parse_error = True
-                             else: parse_error = True
-                             if parse_error: print(f"Error: Invalid target format for Potion ghost card. Expected 'active' or 'bench <idx>'.")
-                         # Add more target parsing here if needed for other opponent items
+                            else: parse_error = True
+                            if parse_error: print(f"Error: Invalid target format for Potion ghost card. Expected 'active' or 'bench <idx>'.")
 
-                         if parse_error:
+                        if parse_error:
                               reward -= 0.5
                               action_executed = False
-                         else:
-                             action_executed = True # Assume valid play attempt
+                        else:
+                             action_executed = True
                              effect_executed_successfully = self._execute_trainer_effect(
                                  effect_tag, player, opponent, **target_kwargs
                              )
-                             # Add ghost card to discard AFTER effect attempt
                              player.discard_pile.append(ghost_card)
-                     elif ghost_card is None:
+                    elif ghost_card is None:
                          print(f"Error: Could not instantiate opponent item '{card_name}'.")
                          reward -= 0.5
                          action_executed = False
-                     else:
+                    else:
                          print(f"Error: Opponent tried to play non-Item card '{card_name}' as item.")
                          reward -= 0.5
                          action_executed = False
@@ -879,25 +804,25 @@ class Game:
                      reward -= 0.5
                      action_executed = False
 
-            # --- Handle Opponent Play Basic Pokemon (Ghost Card) ---
+            # handle playing basic pokemon
             elif action.startswith(ACTION_OPP_PLAY_BASIC_PREFIX):
+                reward = -0.01
                 if player.can_place_on_bench():
                     try:
-                        # Format: OPP_PLAY_BASIC_Pokemon-Name-With-Hyphens
                         card_name_hyphenated = action.replace(ACTION_OPP_PLAY_BASIC_PREFIX, "")
                         card_name = card_name_hyphenated.replace('-', ' ')
 
                         ghost_card = self._instantiate_card_from_name(card_name)
 
                         if isinstance(ghost_card, PokemonCard) and ghost_card.is_basic:
-                            # Place the instantiated ghost card directly onto the bench
-                            player.place_on_bench(ghost_card) # This function handles printing
+                            # place the ghost card onto the bench
+                            player.place_on_bench(ghost_card)
                             action_executed = True
                             reward += 0.01
                         elif ghost_card is None:
-                             print(f"Error: Could not instantiate opponent basic Pokemon '{card_name}'.")
-                             reward -= 0.5
-                             action_executed = False
+                            print(f"Error: Could not instantiate opponent basic Pokemon '{card_name}'.")
+                            reward -= 0.5
+                            action_executed = False
                         else:
                             print(f"Error: Opponent tried to play non-Basic Pokemon card '{card_name}' to bench.")
                             reward -= 0.5
@@ -908,27 +833,26 @@ class Game:
                          action_executed = False
                 else:
                      print("Opponent cannot play to bench: Bench is full.")
-                     reward -= 0.5 # Penalize if user tried this when bench full
-                     action_executed = False # Action failed
+                     reward -= 0.5
+                     action_executed = False
 
-            # --- Handle Opponent Attach Tool (Ghost Card) ---
+            # handle attaching tool ghost card
             elif action.startswith(ACTION_OPP_ATTACH_TOOL_PREFIX):
-                 try:
-                     # Format: OPP_ATTACH_TOOL_Tool-Name-With-Hyphens_TargetType[_TargetIndex]
-                     action_parts = action.replace(ACTION_OPP_ATTACH_TOOL_PREFIX, "").split('_')
-                     card_name_hyphenated = action_parts[0]
-                     card_name = card_name_hyphenated.replace('-', ' ')
-                     target_type = action_parts[1] # Should be 'active' or 'bench'
-                     target_index_str = action_parts[2] if len(action_parts) > 2 else None
+                reward = -0.01
+                try:
+                    action_parts = action.replace(ACTION_OPP_ATTACH_TOOL_PREFIX, "").split('_')
+                    card_name_hyphenated = action_parts[0]
+                    card_name = card_name_hyphenated.replace('-', ' ')
+                    target_type = action_parts[1] # Should be 'active' or 'bench'
+                    target_index_str = action_parts[2] if len(action_parts) > 2 else None
 
-                     ghost_card = self._instantiate_card_from_name(card_name)
-                     target_pokemon: Optional[PokemonCard] = None
+                    ghost_card = self._instantiate_card_from_name(card_name)
+                    target_pokemon: Optional[PokemonCard] = None
 
-                     if isinstance(ghost_card, TrainerCard) and ghost_card.trainer_type == "Tool":
-                         # Find target Pokemon
-                         if target_type == "active":
+                    if isinstance(ghost_card, TrainerCard) and ghost_card.trainer_type == "Tool":
+                        if target_type == "active":
                              target_pokemon = player.active_pokemon
-                         elif target_type == "bench" and target_index_str is not None:
+                        elif target_type == "bench" and target_index_str is not None:
                              try:
                                  bench_index = int(target_index_str)
                                  if 0 <= bench_index < len(player.bench):
@@ -937,46 +861,44 @@ class Game:
                                      print(f"Error: Invalid bench index '{bench_index}' for opponent tool attach.")
                              except ValueError:
                                  print(f"Error: Invalid bench index format '{target_index_str}'.")
-                         else:
+                        else:
                              print(f"Error: Invalid target type '{target_type}' for opponent tool attach.")
 
-                         # Attach if valid target found and can attach
-                         if target_pokemon and not target_pokemon.is_fainted and target_pokemon.attached_tool is None:
-                             target_pokemon.attached_tool = ghost_card
-                             print(f"Opponent attached {ghost_card.name} to {target_pokemon.name}.")
-                             # Apply immediate effects (e.g., HP boost)
-                             if ghost_card.effect_tag == "TRAINER_TOOL_GIANT_CAPE_THE_POKÉMON_THIS_CARD_IS_A":
-                                 target_pokemon.hp += 20
-                                 target_pokemon.current_hp += 20
-                                 print(f"  Opponent's {target_pokemon.name} HP increased by 20 due to Giant Cape.")
-                             action_executed = True
-                         elif target_pokemon is None:
-                              print(f"Error: Could not find target {target_type} {target_index_str or ''} for opponent tool.")
-                              reward -= 0.5
-                              action_executed = False
-                         else:
-                              print(f"Opponent cannot attach {ghost_card.name}: Target invalid or already has a tool.")
-                              reward -= 0.5
-                              action_executed = False
+                        if target_pokemon and not target_pokemon.is_fainted and target_pokemon.attached_tool is None:
+                            target_pokemon.attached_tool = ghost_card
+                            print(f"Opponent attached {ghost_card.name} to {target_pokemon.name}.")
+                            # max hp and current hp increases by 20 if cap is attached
+                            if ghost_card.effect_tag == "TRAINER_TOOL_GIANT_CAPE_THE_POKÉMON_THIS_CARD_IS_A":
+                                target_pokemon.hp += 20
+                                target_pokemon.current_hp += 20
+                                print(f"  Opponent's {target_pokemon.name} HP increased by 20 due to Giant Cape.")
+                            action_executed = True
+                        elif target_pokemon is None:
+                            print(f"Error: Could not find target {target_type} {target_index_str or ''} for opponent tool.")
+                            reward -= 0.5
+                            action_executed = False
+                        else:
+                            print(f"Opponent cannot attach {ghost_card.name}: Target invalid or already has a tool.")
+                            reward -= 0.5
+                            action_executed = False
 
-                     elif ghost_card is None:
-                         print(f"Error: Could not instantiate opponent tool '{card_name}'.")
-                         reward -= 0.5
-                         action_executed = False
-                     else:
-                         print(f"Error: Opponent tried to attach non-Tool card '{card_name}'.")
-                         reward -= 0.5
-                         action_executed = False
-                 except Exception as e:
-                     print(f"Error parsing opponent attach tool action '{action}': {e}")
-                     reward -= 0.5
-                     action_executed = False
+                    elif ghost_card is None:
+                        print(f"Error: Could not instantiate opponent tool '{card_name}'.")
+                        reward -= 0.5
+                        action_executed = False
+                    else:
+                        print(f"Error: Opponent tried to attach non-Tool card '{card_name}'.")
+                        reward -= 0.5
+                        action_executed = False
+                except Exception as e:
+                    print(f"Error parsing opponent attach tool action '{action}': {e}")
+                    reward -= 0.5
+                    action_executed = False
 
             elif action.startswith(ACTION_ATTACH_ENERGY_BENCH_PREFIX):
-                if is_game_first_turn_overall: # Use the flag checked at the start of step
-                     print("Error: Cannot attach energy on the first turn of the game.")
-                     reward -= 0.5 # Increased penalty
-                     # action_executed remains False
+                if is_game_first_turn_overall:
+                    print("Error: Cannot attach energy on the first turn of the game.")
+                    reward -= 0.5
                 else:
                     can_attach_energy_this_turn = not self.actions_this_turn.get("energy_attached", False)
                     energy_to_attach = player.energy_stand_available
@@ -985,151 +907,129 @@ class Game:
                         try:
                             bench_index = int(action.split('_')[-1])
                             if 0 <= bench_index < len(player.bench):
-                                 target_pokemon = player.bench[bench_index]
-                                 if target_pokemon and not target_pokemon.is_fainted:
-                                      # Check energy count BEFORE attaching
-                                      current_energy_count = sum(target_pokemon.attached_energy.values())
-                                      reward += 0.03
-                                      target_pokemon.attach_energy(energy_to_attach)
-                                      player.energy_stand_available = None # Consume energy
-                                      self.actions_this_turn["energy_attached"] = True
-                                      action_executed = True # Attaching energy doesn't end turn
-                                      # Reward is now set above based on condition
+                                target_pokemon = player.bench[bench_index]
+                                if target_pokemon and not target_pokemon.is_fainted:
+                                    target_pokemon.attach_energy(energy_to_attach)
+                                    player.energy_stand_available = None # consume the energy
+                                    self.actions_this_turn["energy_attached"] = True
+                                    action_executed = True
 
-                                      # --- Check for Nightmare Aura (Darkrai ex) ---
-                                      if target_pokemon.name == "Darkrai ex" and energy_to_attach == "Darkness":
-                                         print(f"Ability Trigger: {target_pokemon.name}'s Nightmare Aura!")
-                                         opponent = self.game_state.get_opponent()
-                                         if opponent.active_pokemon and not opponent.active_pokemon.is_fainted:
-                                             opponent.active_pokemon.take_damage(20)
-                                             print(f"  Nightmare Aura dealt 20 damage to {opponent.active_pokemon.name}.")
-                                             # Check for KO from ability damage
-                                             if opponent.active_pokemon.is_fainted:
-                                                 points_scored = 2 if opponent.active_pokemon.is_ex else 1
-                                                 print(f"  {opponent.active_pokemon.name} fainted from Nightmare Aura. {player.name} scores {points_scored} point(s).")
-                                                 player.add_point(points_scored)
-                                                 reward += 0.75 * points_scored
-                                                 winner = self.game_state.check_win_condition()
-                                                 if winner:
-                                                     print(f"Game Over. Winner: {winner.name}")
-                                                     reward += 2.0 # Big reward for winning
-                                                     done = True
-                                                 elif not opponent.promote_bench_pokemon():
-                                                      print(f"Game Over. {opponent.name} has no Pokemon to promote. Winner: {player.name}")
-                                                      reward += 2.0 # Reward for winning
-                                                      done = True
+                                      # check for nightmare aura on energy attach
+                                    if target_pokemon.name == "Darkrai ex" and energy_to_attach == "Darkness":
+                                        print(f"Ability Trigger: {target_pokemon.name}'s Nightmare Aura!")
+                                        opponent = self.game_state.get_opponent()
+                                        if opponent.active_pokemon and not opponent.active_pokemon.is_fainted:
+                                            opponent.active_pokemon.take_damage(20)
+                                            print(f"  Nightmare Aura dealt 20 damage to {opponent.active_pokemon.name}.")
+                                            # check if nightmare aura killed the opponent's active
+                                            if opponent.active_pokemon.is_fainted:
+                                                points_scored = 2 if opponent.active_pokemon.is_ex else 1
+                                                print(f"  {opponent.active_pokemon.name} fainted from Nightmare Aura. {player.name} scores {points_scored} point(s).")
+                                                player.add_point(points_scored)
+                                                reward += 1.5 * points_scored
+                                                winner = self.game_state.check_win_condition()
+                                                if winner:
+                                                    print(f"Game Over. Winner: {winner.name}")
+                                                    reward += 5.0 
+                                                    done = True
+                                                elif not opponent.promote_bench_pokemon():
+                                                    print(f"Game Over. {opponent.name} has no Pokemon to promote. Winner: {player.name}")
+                                                    reward += 5.0
+                                                    done = True
 
-                                 else:
-                                     print(f"Cannot attach energy to bench {bench_index}: Pokemon fainted or invalid.")
-                                     reward -= 0.5 # Increased penalty
-                                     # action_executed remains False
+                                else:
+                                    print(f"Cannot attach energy to bench {bench_index}: Pokemon fainted or invalid.")
+                                    reward -= 0.5
                             else:
-                                 print(f"Invalid bench index in action: {action}")
-                                 reward -= 0.5 # Increased penalty
-                                 # action_executed remains False
+                                print(f"Invalid bench index in action: {action}")
+                                reward -= 0.5
                         except (ValueError, IndexError):
-                             print(f"Invalid attach energy bench action format: {action}")
-                             reward -= 0.5 # Increased penalty
-                             # action_executed remains False
+                            print(f"Invalid attach energy bench action format: {action}")
+                            reward -= 0.5
                     else:
-                         print(f"Cannot attach energy (Available: {energy_to_attach}, Attached This Turn: {not can_attach_energy_this_turn}).")
-                         # Keep penalty for trying illegal attach
-                         if energy_to_attach and not can_attach_energy_this_turn:
-                             reward -= 0.5 # Increased penalty
-                         # action_executed remains False
+                        print(f"Cannot attach energy (Available: {energy_to_attach}, Attached This Turn: {not can_attach_energy_this_turn}).")
+                        if energy_to_attach and not can_attach_energy_this_turn:
+                            reward -= 0.5
 
-            # Handle attacking
-            elif action.startswith(ACTION_ATTACK_PREFIX): # Corrected indentation
-                if is_game_first_turn_overall: # Use the flag checked at the start of step
-                    print("Error: Cannot attack on the first turn of the game.")
-                    reward -= 0.5 # Increased penalty
-                    # action_executed remains False
-                else:
-                    if player.active_pokemon and not player.active_pokemon.is_fainted:
-                        try:
-                            attack_index = int(action.split('_')[-1])
-                            if 0 <= attack_index < len(player.active_pokemon.attacks):
-                                if player.active_pokemon.can_attack(attack_index):
-                                    # --- Execute Attack ---
-                                    attack = player.active_pokemon.attacks[attack_index]
-                                    print(f"{player.name}'s {player.active_pokemon.name} uses {attack.name}!")
+            # attacking:
+            elif action.startswith(ACTION_ATTACK_PREFIX):
+                if player.active_pokemon and not player.active_pokemon.is_fainted:
+                    try:
+                        # get which attack the player is trying to use
+                        attack_index = int(action.split('_')[-1])
+                        if 0 <= attack_index < len(player.active_pokemon.attacks):
+                            if player.active_pokemon.can_attack(attack_index):
+                                # execute the attack:
+                                attack = player.active_pokemon.attacks[attack_index]
+                                print(f"{player.name}'s {player.active_pokemon.name} uses {attack.name}!")
 
-                                    # Apply Red's effect if active
-                                    damage_modifier = 20 if self.actions_this_turn.get("red_effect_active", False) else 0
-                                    print(f"  (Red's effect active: {self.actions_this_turn.get('red_effect_active', False)}, Damage Mod: +{damage_modifier})")
+                                # check if player used red (adds 20 damage to attack)
+                                damage_modifier = 20 if self.actions_this_turn.get("red_effect_active", False) else 0
+                                print(f"  (Red's effect active: {self.actions_this_turn.get('red_effect_active', False)}, Damage Mod: +{damage_modifier})")
 
-                                    # Calculate damage (including modifier)
-                                    damage_dealt = player.active_pokemon.perform_attack(
-                                        attack_index,
-                                        opponent.active_pokemon,
-                                        damage_modifier=damage_modifier
-                                    )
-                                    reward += damage_dealt * 0.05 # Reward based on damage dealt
+                                # calculate the damage
+                                damage_dealt = player.active_pokemon.perform_attack(
+                                    attack_index,
+                                    opponent.active_pokemon,
+                                    damage_modifier=damage_modifier
+                                )
+                                reward += damage_dealt * 0.02 # Reward based on damage dealt
 
-                                    # --- Apply Recoil Damage (e.g., Chaotic Impact) ---
-                                    if player.active_pokemon.name == "Giratina ex" and attack.name == "Chaotic Impact":
-                                        recoil_damage = 20
-                                        print(f"  {player.active_pokemon.name} took {recoil_damage} recoil damage from Chaotic Impact.")
-                                        player.active_pokemon.take_damage(recoil_damage)
-                                        # Check if attacker fainted from recoil
-                                        if player.active_pokemon.is_fainted:
-                                            points_scored_by_opponent = 2 if player.active_pokemon.is_ex else 1
-                                            print(f"  {player.active_pokemon.name} fainted from recoil! {opponent.name} scores {points_scored_by_opponent} point(s).")
-                                            opponent.add_point(points_scored_by_opponent)
-                                            reward -= 1.5 * points_scored_by_opponent # Negative reward for self-KO
-                                            winner = self.game_state.check_win_condition()
-                                            if winner:
-                                                print(f"Game Over due to recoil KO. Winner: {winner.name}")
-                                                reward -= 5.0 # Big penalty for losing via recoil
-                                                done = True
-                                                # Return early if game ends due to recoil KO
-                                                # Need to get state before returning
-                                                final_state_for_acting_player = self.get_state_representation(player)
-                                                # We need to return from the step function here
-                                                # This requires restructuring or a flag, let's use a flag for now
-                                                # Or maybe just let the normal turn end logic handle it if done is set?
-                                                # Let's set done and let the end-of-step logic handle return.
-                                            elif not player.promote_bench_pokemon():
-                                                print(f"Game Over. {player.name} fainted from recoil and has no Pokemon to promote. Winner: {opponent.name}")
-                                                reward -= 5.0 # Penalty for losing
-                                                done = True
-                                            # If player promoted successfully, the turn ends normally after opponent KO check
-
-                                    # --- Check for Opponent KO (after potential recoil) ---
-                                    # Ensure opponent's active wasn't already handled by recoil KO ending the game
-                                    if not done and opponent.active_pokemon and opponent.active_pokemon.is_fainted:
-                                        points_scored = 2 if opponent.active_pokemon.is_ex else 1
-                                        print(f"  {opponent.active_pokemon.name} fainted! {player.name} scores {points_scored} point(s).")
-                                        player.add_point(points_scored)
-                                        reward += 1.5 * points_scored
-                                        # Check win condition immediately after scoring points
+                                # giratina's attack makes itself take 20 damage when used
+                                if player.active_pokemon.name == "Giratina ex" and attack.name == "Chaotic Impact":
+                                    recoil_damage = 20
+                                    print(f"  {player.active_pokemon.name} took {recoil_damage} recoil damage from Chaotic Impact.")
+                                    player.active_pokemon.take_damage(recoil_damage)
+                                    # check if giratina fained from recoil damage
+                                    if player.active_pokemon.is_fainted:
+                                        points_scored_by_opponent = 2 if player.active_pokemon.is_ex else 1
+                                        print(f"  {player.active_pokemon.name} fainted from recoil! {opponent.name} scores {points_scored_by_opponent} point(s).")
+                                        opponent.add_point(points_scored_by_opponent)
+                                        reward -= 1.5 * points_scored_by_opponent # negative reward for self KO
                                         winner = self.game_state.check_win_condition()
                                         if winner:
-                                            print(f"Game Over. Winner: {winner.name}")
-                                            reward += 5.0 # Big reward for winning
+                                            print(f"Game Over due to recoil KO. Winner: {winner.name}")
+                                            reward -= 5.0 # made it a big penalty to lose from recoil damage
                                             done = True
-                                            # No need to promote if game is over
-                                        else:
-                                            # Opponent needs to promote a new active Pokemon
-                                            if not opponent.promote_bench_pokemon():
-                                                print(f"Game Over. {opponent.name} has no Pokemon to promote. Winner: {player.name}")
-                                                reward += 5.0 # Reward for winning
-                                                done = True
+                                            final_state_for_acting_player = self.get_state_representation(player)
+                                        elif not player.promote_bench_pokemon():
+                                            print(f"Game Over. {player.name} fainted from recoil and has no Pokemon to promote. Winner: {opponent.name}")
+                                            reward -= 5.0
+                                            done = True
 
-                                    action_executed = True # Attack execution ends the turn implicitly later
-                                else:
-                                    print(f"Cannot use attack {attack_index}: Cannot afford cost.")
-                                    reward -= 0.5 # Increased penalty
+                                # check for opponent KO after recoil
+                                if not done and opponent.active_pokemon and opponent.active_pokemon.is_fainted:
+                                    points_scored = 2 if opponent.active_pokemon.is_ex else 1
+                                    print(f"  {opponent.active_pokemon.name} fainted! {player.name} scores {points_scored} point(s).")
+                                    player.add_point(points_scored)
+                                    reward += 1.5 * points_scored
+                                    # check win condition immediately after scoring points
+                                    winner = self.game_state.check_win_condition()
+                                    if winner:
+                                        print(f"Game Over. Winner: {winner.name}")
+                                        reward += 5.0
+                                        done = True
+                                    else:
+                                        # opponent needs to promote a new active Pokemon
+                                        if not opponent.promote_bench_pokemon():
+                                            print(f"Game Over. {opponent.name} has no Pokemon to promote. Winner: {player.name}")
+                                            reward += 5.0 # Reward for winning
+                                            done = True
+
+                                action_executed = True # Attack execution ends the turn implicitly later
                             else:
-                                print(f"Invalid attack index in action: {action}")
+                                print(f"Cannot use attack {attack_index}: Cannot afford cost.")
                                 reward -= 0.5 # Increased penalty
-                        except (ValueError, IndexError):
-                            print(f"Invalid attack action format: {action}")
+                        else:
+                            print(f"Invalid attack index in action: {action}")
                             reward -= 0.5 # Increased penalty
-                    else:
-                        print("Cannot attack: No active Pokemon or it's fainted.")
+                    except (ValueError, IndexError):
+                        print(f"Invalid attack action format: {action}")
                         reward -= 0.5 # Increased penalty
-                        # action_executed remains False
+                else:
+                    print("Cannot attack: No active Pokemon or it's fainted.")
+                    reward -= 0.5 # Increased penalty
+                    # action_executed remains False
 
             # --- Handle Target-Specific Item: Potion ---
             elif action.startswith(ACTION_PLAY_ITEM_POTION_TARGET_PREFIX):
@@ -1640,6 +1540,8 @@ class Game:
         # The observation should always be from the perspective of the player whose turn it is *now*.
         next_player = self.game_state.get_current_player()
         next_state = self.get_state_representation(next_player)
+
+        print(f"[DEBUG] game.step returning | Player: {player.name} | Action: {action} | Reward: {reward:.4f} | Done: {done} | Turn: {self.game_state.turn_number}")
 
         # Return the observation for the current player, reward, and done status.
         return next_state, reward, done # This is the final return if the early return wasn't triggered

@@ -249,7 +249,7 @@ class PokemonTCGPocketEnv(gym.Env):
     metadata = {'render_modes': ['human', 'text'], 'render_fps': 1}
 
     def __init__(self, render_mode: Optional[str] = None,
-                 opponent_checkpoints_dir: str = "models/ppo_checkpoints", # Dir to load opponents from
+                 opponent_checkpoints_dir: str = "models/ppo_checkpoints_v2", # Dir to load opponents from
                  opponent_pool_size: int = 5, # How many recent checkpoints to sample from (-1 for all)
                  always_load_latest_opponent: bool = False,
                  load_opponent_every_n_resets: int = 1

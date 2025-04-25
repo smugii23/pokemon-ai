@@ -35,7 +35,7 @@ CHECKPOINT_DIR = "models/ppo_checkpoints_v2" # Directory for historical opponent
 VEC_NORMALIZE_SAVE_PATH = os.path.join(os.path.dirname(MODEL_SAVE_PATH), "vecnormalize_final.pkl") # Path for final stats
 
 # --- Opponent Checkpoint Configuration ---
-OPPONENT_CHECKPOINT_FREQ = 500000 # How often to save a version for the opponent pool (adjust)
+OPPONENT_CHECKPOINT_FREQ = 1000000 # How often to save a version for the opponent pool (adjust)
 CLEAN_CHECKPOINTS_ON_START = False # Set to True to remove old checkpoints before new training
 N_RESETS_BEFORE_NEW_OPPONENT = 75
 
@@ -44,7 +44,7 @@ HYPERPARAMS = {
     "learning_rate": 1e-4,
     "n_steps": 1024,
     "batch_size": 64,
-    "n_epochs": 4,
+    "n_epochs": 15,
     "gamma": 0.99,
     "gae_lambda": 0.95,
     "clip_range": 0.2,
@@ -60,7 +60,7 @@ class TqdmCallback(BaseCallback):
         super().__init__()
         self.pbar = None
         self.total_timesteps = total_timesteps
-        self.last_print_step = 0 # Track when we last printed debug info
+        self.last_print_step = 0
         print("TqdmCallback Initialized")
 
     def _on_training_start(self):
